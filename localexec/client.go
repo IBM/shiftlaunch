@@ -1,6 +1,7 @@
 package localexec
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,18 +19,22 @@ func NewLocalClient(log *logger.Logger) *LocalClient {
 	return &LocalClient{logger: log}
 }
 
-// Execute runs a bash command locally and returns stdout/stderr
-func (l *LocalClient) Execute(command string) (string, error) {
+// Update Execute to take a context
+func (l *LocalClient) Execute(ctx context.Context, command string) (string, error) {
 	if l.logger != nil {
         l.logger.Debug("Executing local command", "command", command)
     }
-	l.logger.Debug("Executing local command", "cmd", command)
 
-	cmd := exec.Command("bash", "-c", command)
+	// Use CommandContext instead of Command
+	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	output, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(output))
 
 	if err != nil {
+		// If the context was canceled (e.g. Ctrl+C), report it cleanly
+		if ctx.Err() != nil {
+			return outStr, fmt.Errorf("command aborted by user: %w", ctx.Err())
+		}
 		l.logger.Debug("Command failed", "cmd", command, "error", err, "output", outStr)
 		return outStr, fmt.Errorf("local execution failed: %w (output: %s)", err, outStr)
 	}
@@ -39,7 +44,7 @@ func (l *LocalClient) Execute(command string) (string, error) {
 }
 
 // WriteFile writes content directly to the local filesystem (with sudo if needed)
-func (l *LocalClient) WriteFile(path string, content []byte, perms os.FileMode) error {
+func (l *LocalClient) WriteFile(ctx context.Context,path string, content []byte, perms os.FileMode) error {
 	l.logger.Debug("Writing local file", "path", path)
 
 	// Create temp file
@@ -50,20 +55,20 @@ func (l *LocalClient) WriteFile(path string, content []byte, perms os.FileMode) 
 
 	// Move into place with sudo (required for /etc/ directories)
 	mvCmd := fmt.Sprintf("sudo mv %s %s && sudo chmod %04o %s", tmpPath, path, perms, path)
-	if _, err := l.Execute(mvCmd); err != nil {
+	if _, err := l.Execute(ctx,mvCmd); err != nil {
 		return fmt.Errorf("failed to move file into place: %w", err)
 	}
 
 	return nil
 }
 
-func (l *LocalClient) SystemctlRestart(service string) error {
+func (l *LocalClient) SystemctlRestart(ctx context.Context, service string) error {
 	l.logger.Info("Restarting local service", "service", service)
-	_, err := l.Execute(fmt.Sprintf("sudo systemctl restart %s", service))
+	_, err := l.Execute(ctx, fmt.Sprintf("sudo systemctl restart %s", service))
 	return err
 }
 
-func (l *LocalClient) SystemctlEnable(service string) error {
-	_, err := l.Execute(fmt.Sprintf("sudo systemctl enable --now %s", service))
+func (l *LocalClient) SystemctlEnable(ctx context.Context, service string) error {
+	_, err := l.Execute(ctx, fmt.Sprintf("sudo systemctl enable --now %s", service))
 	return err
 }

@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	compute "github.com/sudeeshjohn/shiftlaunch/infra/compute"
@@ -11,7 +13,7 @@ import (
 )
 
 // Teardown safely powers off LPARs, removes local services, and marks workspace as deleted
-func (o *Orchestrator) Teardown() error {
+func (o *Orchestrator) Teardown(ctx context.Context) error {
 	// Check if already deleted
 	if o.stateManager.IsDeleted() {
 		o.logger.Info("⚠️ Cluster is already marked as deleted. Skipping teardown.", "cluster", o.cfg.OpenShift.ClusterName)
@@ -62,12 +64,12 @@ func (o *Orchestrator) Teardown() error {
 
 		if o.cfg.ManagedServices.DNS || o.cfg.ManagedServices.DHCP || o.cfg.ManagedServices.PXE {
 			dnsmasq := services.NewDNSmasqManager(o.cfg, o.daemonCfg, o.executor)
-			dnsmasq.Cleanup()
+			dnsmasq.Cleanup(ctx)
 		}
 
 		if o.cfg.ManagedServices.LoadBalancer {
-			o.executor.Execute(fmt.Sprintf("sudo rm -f /etc/haproxy/conf.d/10-%s.cfg", o.cfg.OpenShift.ClusterName))
-			o.executor.SystemctlRestart("haproxy")
+			o.executor.Execute(ctx,fmt.Sprintf("sudo rm -f /etc/haproxy/conf.d/10-%s.cfg", o.cfg.OpenShift.ClusterName))
+			o.executor.SystemctlRestart(ctx,"haproxy")
 
 			o.logger.Info("Removing VIP alias from controller network interface...")
 			
@@ -78,18 +80,18 @@ func (o *Orchestrator) Teardown() error {
 			cidr := o.cfg.Network.MachineCIDR
 			ctrlIP := o.cfg.Controller.IP
 
-			if err := netMgr.RemoveVIPAlias(iface, vip, cidr, ctrlIP); err != nil {
+			if err := netMgr.RemoveVIPAlias(ctx,iface, vip, cidr, ctrlIP); err != nil {
 				o.logger.Warn("Failed to cleanly remove VIP alias via nmcli", "error", err)
 				
 				// Fallback: Force remove it from the live interface using exact CIDR prefix
 				prefix := controller.ExtractCIDRPrefix(cidr)
-				o.executor.Execute(fmt.Sprintf("sudo ip addr del %s/%s dev %s", vip, prefix, iface))
+				o.executor.Execute(ctx,fmt.Sprintf("sudo ip addr del %s/%s dev %s", vip, prefix, iface))
 			}
 		}
 		
 		// Clean up HTTP Server
-		httpServer := services.NewHTTPServerManager(o.cfg, o.executor, o.logger)
-		httpServer.Cleanup()
+		httpServer := services.NewHTTPServerManager(o.cfg, o.daemonCfg, o.executor, o.logger)
+		httpServer.Cleanup(ctx)
 	}()
 	o.endPhase(phaseExec, phaseErr)
 
@@ -101,6 +103,17 @@ func (o *Orchestrator) Teardown() error {
 		if err := o.stateManager.MarkDeleted(); err != nil {
 			o.logger.Warn("Failed to create .deleted marker", "error", err)
 			phaseErr = err
+		}
+		
+		// --- FIX: Remove the markers so the cluster is officially unregistered ---
+		managedMarkerPath := filepath.Join(o.workspaceDir, ".managed")
+		if err := os.Remove(managedMarkerPath); err != nil && !os.IsNotExist(err) {
+			o.logger.Warn("Failed to remove .managed marker", "error", err)
+		}
+		
+		failedMarkerPath := filepath.Join(o.workspaceDir, ".failed")
+		if err := os.Remove(failedMarkerPath); err != nil && !os.IsNotExist(err) {
+			o.logger.Warn("Failed to remove .failed marker", "error", err)
 		}
 	}()
 	o.endPhase(phaseExec, phaseErr)

@@ -290,4 +290,29 @@ func (s *DeploymentState) Save() error {
 	return sm.SaveState(s)
 }
 
-// Made with Bob
+// GetFailedMarkerPath returns the path to the failed marker file
+func (sm *StateManager) GetFailedMarkerPath() string {
+	return filepath.Join(sm.workspaceDir, ".failed")
+}
+
+// MarkFailed creates the .failed marker file
+func (sm *StateManager) MarkFailed() error {
+	failedPath := sm.GetFailedMarkerPath()
+	content := fmt.Sprintf("Deployment failed at: %s\n", time.Now().Format(time.RFC3339))
+	return os.WriteFile(failedPath, []byte(content), 0644)
+}
+
+// ClearFailed removes the .failed marker file
+func (sm *StateManager) ClearFailed() error {
+	failedPath := sm.GetFailedMarkerPath()
+	if _, err := os.Stat(failedPath); err == nil {
+		return os.Remove(failedPath)
+	}
+	return nil
+}
+
+// IsFailed checks if the cluster deployment is in a failed state
+func (sm *StateManager) IsFailed() bool {
+	_, err := os.Stat(sm.GetFailedMarkerPath())
+	return err == nil
+}

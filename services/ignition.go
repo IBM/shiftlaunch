@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,10 +58,10 @@ pullSecret: '{{.PullSecret}}'
 sshKey: '{{.SSHKey}}'
 `
 
-func GenerateIgnition(cfg *types.AgentConfig, exec *localexec.LocalClient, workspaceDir string) error {
-	// --- NEW: Define and create the openstack-upi target directory ---
-	targetDir := filepath.Join(workspaceDir, "openstack-upi")
-	exec.Execute(fmt.Sprintf("mkdir -p %s", targetDir))
+func GenerateIgnition(ctx context.Context,cfg *types.AgentConfig, exec *localexec.LocalClient, workspaceDir string) error {
+	// --- NEW: Define and create the install-dir target directory ---
+	targetDir := filepath.Join(workspaceDir, "install-dir")
+	exec.Execute(ctx,fmt.Sprintf("mkdir -p %s", targetDir))
 
 	// 1. Generate install-config.yaml
 	installConfig, err := generateInstallConfigYAML(cfg)
@@ -68,14 +69,14 @@ func GenerateIgnition(cfg *types.AgentConfig, exec *localexec.LocalClient, works
 		return err
 	}
 
-	// Write to the new openstack-upi directory
+	// Write to the new install-dir directory
 	configPath := filepath.Join(targetDir, "install-config.yaml")
 	if err := os.WriteFile(configPath, []byte(installConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write install-config.yaml: %w", err)
 	}
 
 	// Backup the config because openshift-install consumes it
-	exec.Execute(fmt.Sprintf("cp %s %s.bak", configPath, configPath))
+	exec.Execute(ctx,fmt.Sprintf("cp %s %s.bak", configPath, configPath))
 
 	// 2. Run openshift-install locally
 	// Note: The installer binary is still in the parent workspace's tools directory
@@ -90,11 +91,11 @@ func GenerateIgnition(cfg *types.AgentConfig, exec *localexec.LocalClient, works
 		cmd = fmt.Sprintf("cd %s && %s create ignition-configs --dir=.", targetDir, installerPath)
 	}
 
-	if _, err := exec.Execute(cmd); err != nil {
+	if _, err := exec.Execute(ctx,cmd); err != nil {
 		return fmt.Errorf("failed to create ignition configs: %w", err)
 	}
 
-	// 3. Stage files for HTTP hosting
+/* 	// 3. Stage files for HTTP hosting
 	httpDir := filepath.Join(workspaceDir, "http")
 	exec.Execute(fmt.Sprintf("mkdir -p %s/ignition", httpDir))
 	exec.Execute(fmt.Sprintf("cp -r %s/rhcos %s/", workspaceDir, httpDir))
@@ -105,7 +106,7 @@ func GenerateIgnition(cfg *types.AgentConfig, exec *localexec.LocalClient, works
 	} else {
 		// Copy from targetDir
 		exec.Execute(fmt.Sprintf("cp %s/*.ign %s/ignition/", targetDir, httpDir))
-	}
+	} */
 
 
 	return nil

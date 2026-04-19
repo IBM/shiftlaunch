@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/sudeeshjohn/shiftlaunch/localexec"
@@ -10,7 +11,7 @@ import (
 )
 
 // Validate validates cluster configuration
-func Validate(orch *orchestrator.Orchestrator, config *types.AgentConfig) error {
+func Validate(ctx context.Context,orch *orchestrator.Orchestrator, config *types.AgentConfig) error {
 	log := orch.GetLogger()
 	log.Info("=== Validating Configuration ===")
 
@@ -29,7 +30,7 @@ func Validate(orch *orchestrator.Orchestrator, config *types.AgentConfig) error 
 	// If HMC credentials are provided, the orchestrator/main should have 
 	// initialized the HMC client which can be injected here for Phase 3 checks.
 	// For now, we run the standard validation suite.
-	if err := validator.Validate(); err != nil {
+	if err := validator.Validate(ctx); err != nil {
 		return fmt.Errorf("validation failed for cluster %s: %w", clusterName, err)
 	}
 

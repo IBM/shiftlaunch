@@ -15,6 +15,7 @@ import (
 	"github.com/sudeeshjohn/shiftlaunch/logger"
 	"github.com/sudeeshjohn/shiftlaunch/services"
 	"github.com/sudeeshjohn/shiftlaunch/types"
+	"go.yaml.in/yaml/v3"
 )
 
 // Orchestrator manages the local execution of the BYOI Boot Agent
@@ -103,7 +104,7 @@ func (o *Orchestrator) endPhase(phaseExec *types.PhaseExecution, err error) {
 }
 
 // Deploy executes the linear installation pipeline
-func (o *Orchestrator) Deploy(resume bool) error {
+func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 	// Check if cluster was previously deleted
 	if o.stateManager.IsDeleted() && !resume {
 		o.logger.Info("⚠️  Cluster was previously deleted. Clearing deleted marker for new deployment...", "cluster", o.cfg.OpenShift.ClusterName)
@@ -123,17 +124,25 @@ func (o *Orchestrator) Deploy(resume bool) error {
 	if err := o.stateManager.AcquireLock(); err != nil {
 		return fmt.Errorf("failed to acquire cluster lock: %w", err)
 	}
-	// Ensure lock is always released, even on error
+
+	// Ensure lock is released and correct state markers are applied, even on panic/error
 	defer func() {
-		if err := o.stateManager.ReleaseLock(); err != nil {
-			o.logger.Warn("Failed to release lock", "error", err)
+		if err != nil {
+			o.state.Status = "failed"
+			o.stateManager.MarkFailed()
+		} else {
+			o.state.Status = "completed"
+			o.state.CurrentPhase = "done"
+			o.state.EndTime = time.Now().Format(time.RFC3339)
+			o.stateManager.MarkManaged()
+			o.stateManager.ClearFailed()
+		}
+		_ = o.stateManager.SaveState(o.state)
+		
+		if lockErr := o.stateManager.ReleaseLock(); lockErr != nil {
+			o.logger.Warn("Failed to release lock", "error", lockErr)
 		}
 	}()
-
-	// Mark cluster as managed by ShiftLaunch
-	if err := o.stateManager.MarkManaged(); err != nil {
-		o.logger.Warn("Failed to create managed marker", "error", err)
-	}
 
 	o.logger.Info("🚀 Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
 
@@ -148,7 +157,7 @@ func (o *Orchestrator) Deploy(resume bool) error {
 			// Check if VIP is configured on interface
 			iface := o.cfg.Controller.NetworkInterface
 			if iface != "" {
-				output, err := o.executor.Execute(fmt.Sprintf("ip addr show %s", iface))
+				output, err := o.executor.Execute(ctx,fmt.Sprintf("ip addr show %s", iface))
 				if err == nil && strings.Contains(output, o.cfg.Network.LoadBalancerIP+"/") {
 					// VIP is configured - check which cluster is using it
 					conflictingCluster := o.findClusterUsingVIP(o.cfg.Network.LoadBalancerIP)
@@ -207,8 +216,8 @@ func (o *Orchestrator) Deploy(resume bool) error {
 		phaseExec := o.startPhase("downloads")
 		o.logger.Info("\n[Phase 2] Downloading OpenShift Artifacts")
 		
-		downloader := services.NewDownloader(o.cfg, o.executor, o.logger)
-		phaseErr := downloader.DownloadAll(o.workspaceDir)
+		downloader := services.NewDownloader(o.cfg, o.daemonCfg, o.executor, o.logger)
+		phaseErr := downloader.DownloadAll(ctx,o.workspaceDir)
 		
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
@@ -224,12 +233,12 @@ func (o *Orchestrator) Deploy(resume bool) error {
 
 		var phaseErr error
 		func() {
-			setup := services.NewControllerSetup(o.cfg, o.executor, o.logger)
-			if err := setup.InstallPackages(); err != nil {
+			setup := services.NewControllerSetup(o.cfg, o.daemonCfg, o.executor, o.logger)
+			if err := setup.InstallPackages(ctx); err != nil {
 				phaseErr = fmt.Errorf("failed to setup controller dependencies: %w", err)
 				return
 			}
-			if err := setup.ConfigureFirewall(); err != nil {
+			if err := setup.ConfigureFirewall(ctx); err != nil {
 				phaseErr = fmt.Errorf("failed to configure local firewall: %w", err)
 				return
 			}
@@ -238,10 +247,10 @@ func (o *Orchestrator) Deploy(resume bool) error {
 				o.logger.Info(" -> Configuring Local HAProxy...")
 
 				// 1. Allow HAProxy to bind to the VIP immediately (fixes the systemd crash)
-				o.executor.Execute("sudo sysctl -w net.ipv4.ip_nonlocal_bind=1")
+				o.executor.Execute(ctx,"sudo sysctl -w net.ipv4.ip_nonlocal_bind=1")
 				
 				// 2. Allow HAProxy to route OpenShift's custom ports through SELinux
-				o.executor.Execute("sudo setsebool -P haproxy_connect_any 1")
+				o.executor.Execute(ctx,"sudo setsebool -P haproxy_connect_any 1")
 
 				// 3. Bind the VIP to the controller's physical network interface
 				netMgr := controller.NewNetworkManager(o.executor, o.debug, o.logger)
@@ -249,12 +258,12 @@ func (o *Orchestrator) Deploy(resume bool) error {
 				iface := o.cfg.Controller.NetworkInterface
 				cidr := o.cfg.Network.MachineCIDR
 				
-				if err := netMgr.AddVIPAlias(iface, vip, cidr); err != nil {
+				if err := netMgr.AddVIPAlias(ctx,iface, vip, cidr); err != nil {
 					o.logger.Warn("Failed to configure VIP via nmcli. HAProxy will start, but routing may fail.", "error", err)
 				}
 
 				// 4. Generate config and start the service
-				if err := services.SetupHAProxy(o.cfg, o.executor); err != nil {
+				if err := services.SetupHAProxy(ctx,o.cfg, o.executor); err != nil {
 					phaseErr = err
 					return
 				}
@@ -266,7 +275,7 @@ func (o *Orchestrator) Deploy(resume bool) error {
 
 			if o.cfg.ManagedServices.DNS {
 				o.logger.Info(" -> Configuring Local DNS...")
-				if err := dnsmasq.SetupDNS(); err != nil {
+				if err := dnsmasq.SetupDNS(ctx); err != nil {
 					phaseErr = err
 					return
 				}
@@ -276,7 +285,7 @@ func (o *Orchestrator) Deploy(resume bool) error {
 
 			if o.cfg.ManagedServices.DHCP {
 				o.logger.Info(" -> Configuring Local DHCP...")
-				if err := dnsmasq.SetupDHCP(); err != nil {
+				if err := dnsmasq.SetupDHCP(ctx); err != nil {
 					phaseErr = err
 					return
 				}
@@ -286,12 +295,12 @@ func (o *Orchestrator) Deploy(resume bool) error {
 
 			if o.cfg.ManagedServices.PXE {
 				o.logger.Info(" -> Configuring Local PXE Service...")
-				if err := dnsmasq.SetupPXEService(); err != nil {
+				if err := dnsmasq.SetupPXEService(ctx); err != nil {
 					phaseErr = err
 					return
 				}
 				o.logger.Info(" -> Staging PXE Artifacts...")
-				if err := dnsmasq.ConfigurePXEBoot(o.workspaceDir); err != nil {
+				if err := dnsmasq.ConfigurePXEBoot(ctx,o.workspaceDir); err != nil {
 					phaseErr = err
 					return
 				}
@@ -314,7 +323,7 @@ func (o *Orchestrator) Deploy(resume bool) error {
 		
 		var phaseErr error
 		func() {
-			if err := services.GenerateIgnition(o.cfg, o.executor, o.workspaceDir); err != nil {
+			if err := services.GenerateIgnition(ctx,o.cfg, o.executor, o.workspaceDir); err != nil {
 				phaseErr = err
 				return
 			}
@@ -322,19 +331,19 @@ func (o *Orchestrator) Deploy(resume bool) error {
 			o.logger.Info(" -> Setting up Local HTTP Server (Port 8080)...")
 			
 			// --- NEW: Configure and Start Apache HTTPD ---
-			if err := services.ConfigureHTTPD(o.executor); err != nil {
+			if err := services.ConfigureHTTPD(ctx,o.executor, o.daemonCfg.Network.HTTPPort); err != nil {
 				phaseErr = err
 				return
 			}
 
-			httpServer := services.NewHTTPServerManager(o.cfg, o.executor, o.logger)
-			if err := httpServer.Setup(o.workspaceDir); err != nil {
+			httpServer := services.NewHTTPServerManager(o.cfg, o.daemonCfg, o.executor, o.logger)
+			if err := httpServer.Setup(ctx,o.workspaceDir); err != nil {
 				phaseErr = err
 				return
 			}
 			
 			o.logger.Info(" -> Staging files to HTTP Server...")
-			if err := httpServer.StageFiles(o.workspaceDir); err != nil {
+			if err := httpServer.StageFiles(ctx,o.workspaceDir); err != nil {
 				phaseErr = err
 				return
 			}
@@ -429,10 +438,10 @@ func (o *Orchestrator) Deploy(resume bool) error {
 	}
 
 	// Deployment Complete! Update State.
-	o.state.Status = "completed"
+/* 	o.state.Status = "completed"
 	o.state.CurrentPhase = "done"
 	o.state.EndTime = time.Now().Format(time.RFC3339)
-	_ = o.stateManager.SaveState(o.state)
+	_ = o.stateManager.SaveState(o.state) */
 
 	o.logger.Info("\n🎉 ShiftLaunch Agent Execution Complete! OpenShift is ready.")
 	return nil
@@ -463,8 +472,8 @@ Started: %s
 		status += fmt.Sprintf("Web Console:      https://console-openshift-console.apps.%s\n", clusterDomain)
 		
 		// Add kubeadmin credentials if available locally
-		kubeconfigPath := filepath.Join(o.workspaceDir, "auth", "kubeconfig")
-		pwPath := filepath.Join(o.workspaceDir, "auth", "kubeadmin-password")
+		kubeconfigPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeconfig")
+		pwPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeadmin-password")
 		
 		if _, err := os.Stat(kubeconfigPath); err == nil {
 			status += fmt.Sprintf("\nKubeconfig:       %s\n", kubeconfigPath)
@@ -539,11 +548,15 @@ func (o *Orchestrator) findClusterUsingVIP(vip string) string {
 			continue
 		}
 		
-		// Check if cluster is managed (has .managed marker)
+		// Check if cluster is managed OR failed (both mean the cluster occupies the VIP)
 		managedMarker := filepath.Join(workspaceParent, clusterName, ".managed")
-		if _, err := os.Stat(managedMarker); os.IsNotExist(err) {
-			continue // Not a managed cluster
-		}
+		failedMarker := filepath.Join(workspaceParent, clusterName, ".failed")
+		
+		if _, err1 := os.Stat(managedMarker); os.IsNotExist(err1) {
+			if _, err2 := os.Stat(failedMarker); os.IsNotExist(err2) {
+				continue // Not a managed or failed cluster
+			}
+		}	
 		
 		// Check if cluster is deleted
 		deletedMarker := filepath.Join(workspaceParent, clusterName, ".deleted")
@@ -558,11 +571,10 @@ func (o *Orchestrator) findClusterUsingVIP(vip string) string {
 			continue // Can't read config
 		}
 		
-		// Simple string search for the VIP (faster than full YAML parse)
-		if strings.Contains(string(data), vip) {
-			// Verify it's actually the loadbalancer_ip field
-			if strings.Contains(string(data), fmt.Sprintf("loadbalancer_ip: \"%s\"", vip)) ||
-			   strings.Contains(string(data), fmt.Sprintf("loadbalancer_ip: %s", vip)) {
+		// Safely parse the YAML to guarantee an exact value match
+		var tempCfg types.AgentConfig
+		if err := yaml.Unmarshal(data, &tempCfg); err == nil {
+			if tempCfg.Network.LoadBalancerIP == vip {
 				return clusterName
 			}
 		}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"text/template"
 
@@ -191,7 +192,7 @@ esac
 `
 
 // GenerateHelperScript generates the install helper script for a cluster
-func GenerateHelperScript(cfg *types.AgentConfig) string {
+func GenerateHelperScript(cfg *types.AgentConfig, port int) string {
 	tmpl, err := template.New("helper").Parse(helperScriptTemplate)
 	if err != nil {
 		return fmt.Sprintf("# Error generating template: %v", err)
@@ -203,12 +204,14 @@ func GenerateHelperScript(cfg *types.AgentConfig) string {
 		HTTPDir     string
 		VIP         string
 		HelperIP    string
+		HTTPPort    int
 	}{
 		ClusterName: cfg.OpenShift.ClusterName,
 		BaseDomain:  cfg.OpenShift.BaseDomain,
-		HTTPDir:     fmt.Sprintf("/var/www/html/%s", cfg.OpenShift.ClusterName), // Secure path
+		HTTPDir:     fmt.Sprintf("/var/www/html/%s", cfg.OpenShift.ClusterName),
 		VIP:         cfg.Network.LoadBalancerIP,
 		HelperIP:    cfg.Controller.IP,
+		HTTPPort:    port,
 	}
 
 	var buf bytes.Buffer
@@ -223,40 +226,35 @@ func GenerateHelperScript(cfg *types.AgentConfig) string {
 // HTTPD CONFIGURATION
 // ============================================================================
 
-// ConfigureHTTPD globally configures Apache to serve /var/www/html on port 8080 idempotently
-func ConfigureHTTPD(exec *localexec.LocalClient) error {
+// ConfigureHTTPD globally configures Apache to serve /var/www/html idempotently
+func ConfigureHTTPD(ctx context.Context,exec *localexec.LocalClient, port int) error {
 	// 1. Check if httpd is already perfectly configured
-	// We look for both "Listen 8080" and 'DocumentRoot "/var/www/html"' in the main config
-	checkCmd := `grep -q "^Listen 8080" /etc/httpd/conf/httpd.conf && grep -q '^DocumentRoot "/var/www/html"' /etc/httpd/conf/httpd.conf`
+	checkCmd := fmt.Sprintf(`grep -q "^Listen %d" /etc/httpd/conf/httpd.conf && grep -q '^DocumentRoot "/var/www/html"' /etc/httpd/conf/httpd.conf`, port)
 
-	if _, err := exec.Execute(checkCmd); err == nil {
-		// The configuration is already correct from a previous run!
-		// Just ensure the service is currently enabled and running, then exit safely.
-		exec.SystemctlEnable("httpd")
-		exec.Execute("sudo systemctl start httpd") // Use start instead of restart to avoid disruption
+	if _, err := exec.Execute(ctx,checkCmd); err == nil {
+		exec.SystemctlEnable(ctx,"httpd")
+		exec.Execute(ctx,"sudo systemctl start httpd")
 		return nil
 	}
 
 	// 2. If we reach here, httpd needs to be configured
-
-	// Change the Listen port to 8080 (Matches any "Listen <anything>" and replaces it)
-	if _, err := exec.Execute("sudo sed -i 's/^Listen .*/Listen 8080/g' /etc/httpd/conf/httpd.conf"); err != nil {
+	if _, err := exec.Execute(ctx,fmt.Sprintf("sudo sed -i 's/^Listen .*/Listen %d/g' /etc/httpd/conf/httpd.conf", port)); err != nil {
 		return fmt.Errorf("failed to update Listen port in httpd.conf: %w", err)
 	}
 
 	// Ensure DocumentRoot is set strictly to /var/www/html
-	if _, err := exec.Execute(`sudo sed -i 's|^DocumentRoot .*|DocumentRoot "/var/www/html"|g' /etc/httpd/conf/httpd.conf`); err != nil {
+	if _, err := exec.Execute(ctx,`sudo sed -i 's|^DocumentRoot .*|DocumentRoot "/var/www/html"|g' /etc/httpd/conf/httpd.conf`); err != nil {
 		return fmt.Errorf("failed to update DocumentRoot in httpd.conf: %w", err)
 	}
 
 	// Ensure SELinux allows Apache to read the standard directory
-	exec.Execute("sudo chcon -Rt httpd_sys_content_t /var/www/html")
+	exec.Execute(ctx,"sudo chcon -Rt httpd_sys_content_t /var/www/html")
 
-	// 3. Enable and restart the service so the new configuration takes effect
-	if err := exec.SystemctlEnable("httpd"); err != nil {
+	// 3. Enable and restart the service
+	if err := exec.SystemctlEnable(ctx,"httpd"); err != nil {
 		return fmt.Errorf("failed to enable httpd service: %w", err)
 	}
-	if err := exec.SystemctlRestart("httpd"); err != nil {
+	if err := exec.SystemctlRestart(ctx,"httpd"); err != nil {
 		return fmt.Errorf("failed to restart httpd service: %w", err)
 	}
 

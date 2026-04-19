@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/sudeeshjohn/shiftlaunch/localexec"
 	"github.com/sudeeshjohn/shiftlaunch/logger"
 	"github.com/sudeeshjohn/shiftlaunch/types"
+	"go.yaml.in/yaml/v3"
 )
 
 // ============================================================================
@@ -67,13 +69,13 @@ func (v *Validator) SetLogger(l *logger.Logger) {
 }
 
 // Validate performs comprehensive validation in phases
-func (v *Validator) Validate() error {
+func (v *Validator) Validate(ctx context.Context) error {
 	// Phase 1: Config Validation (static, fast)
 	v.log.Info("Phase 1: Validating configuration...")
 
 	v.validateController()
 	v.validateHMC()
-	v.validateNetwork()
+	v.validateNetwork(ctx)
 	v.validateOpenShift()
 	v.validateNodes()
 
@@ -82,7 +84,7 @@ func (v *Validator) Validate() error {
 	// Phase 2: Local Controller Environment Validation
 	if v.exec != nil {
 		v.log.Info("Phase 2: Validating local controller environment...")
-		v.validateLocalEnvironment()
+		v.validateLocalEnvironment(ctx)
 		v.log.Info("✓ Local environment validated")
 	}
 
@@ -99,7 +101,7 @@ func (v *Validator) Validate() error {
 
 		if hasExternalServices {
 			v.log.Info("Phase 4: Validating external services (BYOI mode)...")
-			v.validateExternalServices()
+			v.validateExternalServices(ctx)
 			v.log.Info("✓ External services validated")
 		}
 	}
@@ -164,7 +166,7 @@ func (v *Validator) validateHMC() {
 }
 
 // validateNetwork validates network configuration
-func (v *Validator) validateNetwork() {
+func (v *Validator) validateNetwork(ctx context.Context) {
 	n := v.cfg.Network
 
 	if v.cfg.OpenShift.BaseDomain == "" {
@@ -190,20 +192,20 @@ func (v *Validator) validateNetwork() {
 	
 	// Validate VIP is not already configured on the controller (conflict detection)
 	if v.cfg.ManagedServices.LoadBalancer && n.LoadBalancerIP != "" {
-		v.validateVIPNotInUse(n.LoadBalancerIP)
+		v.validateVIPNotInUse(ctx,n.LoadBalancerIP)
 	}
 }
 
 // validateVIPNotInUse checks if the VIP is already configured on the controller interface
 // or being used by another managed cluster
-func (v *Validator) validateVIPNotInUse(vip string) {
+func (v *Validator) validateVIPNotInUse(ctx context.Context,vip string) {
 	iface := v.cfg.Controller.NetworkInterface
 	if iface == "" {
 		return // Can't check without interface name
 	}
 	
 	// Check 1: Is VIP configured on the controller interface?
-	output, err := v.exec.Execute(fmt.Sprintf("ip addr show %s", iface))
+	output, err := v.exec.Execute(ctx,fmt.Sprintf("ip addr show %s", iface))
 	if err != nil {
 		v.warnings = append(v.warnings, fmt.Sprintf("Could not check if VIP %s is already in use on interface: %v", vip, err))
 	} else if strings.Contains(output, vip+"/") {
@@ -255,10 +257,14 @@ func (v *Validator) findClusterUsingVIP(vip string) string {
 			continue
 		}
 		
-		// Check if cluster is managed (has .managed marker)
+		// Check if cluster is managed OR failed (both mean the cluster occupies the VIP)
 		managedMarker := filepath.Join(v.workspaceDir, clusterName, ".managed")
-		if _, err := os.Stat(managedMarker); os.IsNotExist(err) {
-			continue // Not a managed cluster
+		failedMarker := filepath.Join(v.workspaceDir, clusterName, ".failed")
+		
+		if _, err1 := os.Stat(managedMarker); os.IsNotExist(err1) {
+			if _, err2 := os.Stat(failedMarker); os.IsNotExist(err2) {
+				continue // Not a managed or failed cluster
+			}
 		}
 		
 		// Check if cluster is deleted
@@ -274,11 +280,10 @@ func (v *Validator) findClusterUsingVIP(vip string) string {
 			continue // Can't read config
 		}
 		
-		// Simple string search for the VIP (faster than full YAML parse)
-		if strings.Contains(string(data), vip) {
-			// Verify it's actually the loadbalancer_ip field
-			if strings.Contains(string(data), fmt.Sprintf("loadbalancer_ip: \"%s\"", vip)) ||
-			   strings.Contains(string(data), fmt.Sprintf("loadbalancer_ip: %s", vip)) {
+		// Safely parse the YAML to guarantee an exact value match
+		var tempCfg types.AgentConfig
+		if err := yaml.Unmarshal(data, &tempCfg); err == nil {
+			if tempCfg.Network.LoadBalancerIP == vip {
 				return clusterName
 			}
 		}
@@ -453,18 +458,18 @@ func (v *Validator) validateMultiNodeCluster() {
 // PHASE 2: LOCAL ENVIRONMENT VALIDATION (LocalExec-Based)
 // ============================================================================
 
-func (v *Validator) validateLocalEnvironment() {
+func (v *Validator) validateLocalEnvironment(ctx context.Context) {
 	// 1. Check if SSH public key exists locally
 	if v.cfg.OpenShift.SSHPublicKeyFile != "" {
 		keyPath := os.ExpandEnv(v.cfg.OpenShift.SSHPublicKeyFile)
 		checkCmd := fmt.Sprintf("test -f %s", keyPath)
-		if _, err := v.exec.Execute(checkCmd); err != nil {
+		if _, err := v.exec.Execute(ctx,checkCmd); err != nil {
 			v.errors = append(v.errors, fmt.Sprintf("SSH KEY MISSING: The public key file '%s' does not exist on the local system.", keyPath))
 		}
 	}
 
 	// 2. Check for sufficient disk space locally (must have at least 10GB free)
-	v.validateLocalDiskSpace()
+	v.validateLocalDiskSpace(ctx)
 
 	// 3. Check for Directory/Config Collisions
 	clusterName := v.cfg.OpenShift.ClusterName
@@ -475,7 +480,7 @@ func (v *Validator) validateLocalEnvironment() {
 	checkCmd := fmt.Sprintf("if [ -d '%s' ] || ls %s 1> /dev/null 2>&1 || ls %s 1> /dev/null 2>&1; then echo 'exists'; else echo 'missing'; fi",
 		httpDir, dnsmasqPath, haproxyPath)
 
-	if out, err := v.exec.Execute(checkCmd); err == nil && strings.TrimSpace(out) == "exists" {
+	if out, err := v.exec.Execute(ctx,checkCmd); err == nil && strings.TrimSpace(out) == "exists" {
 		v.errors = append(v.errors, fmt.Sprintf("CLUSTER COLLISION: Artifacts for '%s' already exist locally. Run the 'delete' command to clean them up first to prevent accidental overwrites.", clusterName))
 	}
 
@@ -486,17 +491,17 @@ func (v *Validator) validateLocalEnvironment() {
 		
 		// Guardrail: Prevent hijacking the controller's primary IP
 		ipCmd := fmt.Sprintf("ip -4 addr show dev %s | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}' | head -1", iface)
-		if hostIP, err := v.exec.Execute(ipCmd); err == nil && strings.TrimSpace(hostIP) == vip {
+		if hostIP, err := v.exec.Execute(ctx,ipCmd); err == nil && strings.TrimSpace(hostIP) == vip {
 			v.errors = append(v.errors, fmt.Sprintf(
 				"VIP conflict: VIP '%s' cannot be the same as the controller's primary IP on %s.", vip, iface))
 		}
 
 		checkBoundCmd := fmt.Sprintf("ip addr show dev %s | grep -q '%s/'", iface, vip)
-		if _, err := v.exec.Execute(checkBoundCmd); err != nil {
+		if _, err := v.exec.Execute(ctx,checkBoundCmd); err != nil {
 			// Not bound to us. Check if it's in use on the network.
 			if v.cfg.ManagedServices.LoadBalancer { // Only ping if we expect to manage it
 				pingCmd := fmt.Sprintf("ping -c 2 -W 2 %s", vip)
-				if _, pingErr := v.exec.Execute(pingCmd); pingErr == nil {
+				if _, pingErr := v.exec.Execute(ctx,pingCmd); pingErr == nil {
 					v.errors = append(v.errors, fmt.Sprintf("IP CONFLICT: The VIP %s is already actively responding on the network. Please choose an unused IP.", vip))
 				}
 			}
@@ -504,9 +509,9 @@ func (v *Validator) validateLocalEnvironment() {
 	}
 }
 
-func (v *Validator) validateLocalDiskSpace() {
+func (v *Validator) validateLocalDiskSpace(ctx context.Context) {
 	dfCmd := "df -BK --output=avail /var/www/html | tail -n 1 | tr -d 'K'"
-	output, err := v.exec.Execute(dfCmd)
+	output, err := v.exec.Execute(ctx,dfCmd)
 	if err != nil {
 		v.warnings = append(v.warnings, fmt.Sprintf("Unable to check disk space locally: %v", err))
 		return
@@ -608,9 +613,9 @@ func (v *Validator) validateBYOILPARs() {
 // PHASE 4: EXTERNAL SERVICES VALIDATION
 // ============================================================================
 
-func (v *Validator) validateExternalServices() {
+func (v *Validator) validateExternalServices(ctx context.Context) {
 	if !v.cfg.ManagedServices.DNS {
-		v.validateExternalDNS()
+		v.validateExternalDNS(ctx)
 	}
 	if !v.cfg.ManagedServices.DHCP {
 		v.validateExternalDHCP()
@@ -619,11 +624,11 @@ func (v *Validator) validateExternalServices() {
 		v.validateExternalPXE()
 	}
 	if !v.cfg.ManagedServices.LoadBalancer {
-		v.validateExternalLoadBalancer()
+		v.validateExternalLoadBalancer(ctx)
 	}
 }
 
-func (v *Validator) validateExternalDNS() {
+func (v *Validator) validateExternalDNS(ctx context.Context) {
 	v.log.Info("    Validating external DNS server...")
 
 	dnsServer := v.cfg.Network.Nameserver
@@ -633,7 +638,7 @@ func (v *Validator) validateExternalDNS() {
 	}
 
 	testCmd := fmt.Sprintf("dig @%s google.com +short +time=2 +tries=1", dnsServer)
-	if _, err := v.exec.Execute(testCmd); err != nil {
+	if _, err := v.exec.Execute(ctx,testCmd); err != nil {
 		v.warnings = append(v.warnings, fmt.Sprintf(
 			"External DNS server %s may not be reachable or responding. Ensure DNS is properly configured before deployment.", dnsServer))
 	} else {
@@ -662,7 +667,7 @@ func (v *Validator) validateExternalPXE() {
 			"   - DHCP Option 67 set to 'core.elf'")
 }
 
-func (v *Validator) validateExternalLoadBalancer() {
+func (v *Validator) validateExternalLoadBalancer(ctx context.Context) {
 	v.log.Info("    Validating external load balancer...")
 
 	vip := v.cfg.Network.LoadBalancerIP
@@ -683,7 +688,7 @@ func (v *Validator) validateExternalLoadBalancer() {
 
 	for _, p := range ports {
 		testCmd := fmt.Sprintf("timeout 2 bash -c 'cat < /dev/null > /dev/tcp/%s/%d' 2>/dev/null", vip, p.port)
-		if _, err := v.exec.Execute(testCmd); err != nil {
+		if _, err := v.exec.Execute(ctx,testCmd); err != nil {
 			v.warnings = append(v.warnings, fmt.Sprintf(
 				"External load balancer port %d (%s) at %s is not responding. This is expected before cluster deployment, but ensure load balancer is configured.",
 				p.port, p.name, vip))

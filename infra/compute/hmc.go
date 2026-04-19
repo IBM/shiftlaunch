@@ -158,8 +158,8 @@ func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) erro
 		return fmt.Errorf("failed to power on LPAR for adapter registration: %w", err)
 	}
 
-	h.logger.Info("⏳ Waiting 5 seconds for LPAR to reach Open Firmware and register adapters...")
-	time.Sleep(5 * time.Second)
+	h.logger.Info("⏳ Waiting 20 seconds for LPAR to reach Open Firmware and register adapters...")
+	time.Sleep(20 * time.Second)
 
 	h.logger.Info("Powering off LPAR for profile query...")
 	_, err = h.hmcClient.PowerOffPartition(node.UUID, "Immediate", false, true)
@@ -167,8 +167,8 @@ func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) erro
 		return fmt.Errorf("failed to power off LPAR: %w", err)
 	}
 
-	h.logger.Info("⏳ Waiting 5 seconds for LPAR to fully power off...")
-	time.Sleep(5 * time.Second)
+	h.logger.Info("⏳ Waiting 10 seconds for LPAR to fully power off...")
+	time.Sleep(10 * time.Second)
 
 	_ = h.hmcClient.CloseVirtualTerminalViaSsh(
 		h.cfg.HMC.IP,

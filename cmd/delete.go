@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/sudeeshjohn/shiftlaunch/orchestrator"
 )
 
 // Delete executes the cluster teardown process
-func Delete(orch *orchestrator.Orchestrator) error {
+func Delete(ctx context.Context,orch *orchestrator.Orchestrator) error {
 	log := orch.GetLogger()
 
 	if orch.IsDeleted() {
@@ -18,7 +19,7 @@ func Delete(orch *orchestrator.Orchestrator) error {
 	log.Info("=== Starting Cluster Teardown ===")
 
 	// The Orchestrator's Teardown method handles the safe BYOI power-off natively
-	if err := orch.Teardown(); err != nil {
+	if err := orch.Teardown(ctx); err != nil {
 		return err
 	}
 

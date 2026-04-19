@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"text/template"
 	"time"
@@ -17,6 +18,14 @@ const haproxyTemplate = `# ==========================================
 # VIP: {{.VIP}} (Single VIP for all services)
 # Generated: {{.Timestamp}}
 # ==========================================
+
+defaults
+    mode                    tcp
+    log                     global
+    option                  tcplog
+    timeout connect         10s
+    timeout client          1h
+    timeout server          1h
 
 # API Server (Port 6443)
 frontend {{.ClusterName}}-openshift-api-server
@@ -134,12 +143,14 @@ func (h *HAProxyGenerator) Generate() (string, error) {
 
 	// Ensure SNO node hostname is populated (fallback to cluster name if empty)
 	var snoNode *types.NodeConfig
-	if cfg.IsSNO() && len(cfg.Nodes.SNO) > 0 {
-		sno := cfg.Nodes.SNO[0]
-		if sno.Hostname == "" {
-			sno.Hostname = cfg.OpenShift.ClusterName
+	
+	// SAFE BOUNDS CHECK: Explicitly verify the slice has elements before accessing index 0
+	if len(cfg.Nodes.SNO) > 0 {
+		// --- FIX: Use a pointer so the modification persists globally ---
+		snoNode = &cfg.Nodes.SNO[0]
+		if snoNode.Hostname == "" {
+			snoNode.Hostname = cfg.OpenShift.ClusterName
 		}
-		snoNode = &sno
 	}
 
 	clusterType := "Multi-Node"
@@ -191,12 +202,12 @@ func (h *HAProxyGenerator) Generate() (string, error) {
 }
 
 // GetConfigPath returns the path where this config should be written
-func (h *HAProxyGenerator) GetConfigPath() string {
+func (h *HAProxyGenerator) GetConfigPath(ctx context.Context) string {
 	return fmt.Sprintf("/etc/haproxy/conf.d/10-%s.cfg", h.cfg.OpenShift.ClusterName)
 }
 
 // SetupHAProxy connects the generator to local execution for the Orchestrator
-func SetupHAProxy(cfg *types.AgentConfig, exec *localexec.LocalClient) error {
+func SetupHAProxy(ctx context.Context,cfg *types.AgentConfig, exec *localexec.LocalClient) error {
 	gen := NewHAProxyGenerator(cfg, false)
 	
 	configContent, err := gen.Generate()
@@ -204,18 +215,18 @@ func SetupHAProxy(cfg *types.AgentConfig, exec *localexec.LocalClient) error {
 		return err
 	}
 
-	configPath := gen.GetConfigPath()
+	configPath := gen.GetConfigPath(ctx)
 	
 	// NEW: Ensure the HAProxy conf.d directory actually exists before moving files
-	exec.Execute("sudo mkdir -p /etc/haproxy/conf.d")
+	exec.Execute(ctx,"sudo mkdir -p /etc/haproxy/conf.d")
 	
 	// Write HAProxy configuration locally
-	if err := exec.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := exec.WriteFile(ctx, configPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write HAProxy config to %s: %w", configPath, err)
 	}
 
 	// Reload/Restart HAProxy service
-	if err := exec.SystemctlRestart("haproxy"); err != nil {
+	if err := exec.SystemctlRestart(ctx,"haproxy"); err != nil {
 		return fmt.Errorf("failed to restart HAProxy: %w", err)
 	}
 

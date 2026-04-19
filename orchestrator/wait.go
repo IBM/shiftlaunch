@@ -26,7 +26,7 @@ func (o *Orchestrator) WaitForBootstrap(cancelCtx context.Context) error {
 	defer cancel()
 
 	installerPath := filepath.Join(o.workspaceDir, "tools", "openshift-install")
-	targetDir := filepath.Join(o.workspaceDir, "openstack-upi") // <--- FIX: Point to the new directory
+	targetDir := filepath.Join(o.workspaceDir, "install-dir") // <--- FIX: Point to the new directory
 
 	cmd := exec.CommandContext(timeoutCtx, installerPath, "wait-for", "bootstrap-complete", "--dir", targetDir, "--log-level=info")
 
@@ -75,7 +75,7 @@ func (o *Orchestrator) WaitForInstall(cancelCtx context.Context) error {
 	}
 
 	installerPath := filepath.Join(o.workspaceDir, "tools", "openshift-install")
-	targetDir := filepath.Join(o.workspaceDir, "openstack-upi") // <--- FIX: Point to the new directory
+	targetDir := filepath.Join(o.workspaceDir, "install-dir") // <--- FIX: Point to the new directory
 
 	cmd := exec.CommandContext(timeoutCtx, installerPath, "wait-for", "install-complete", "--dir", targetDir, "--log-level=info")
 
@@ -98,8 +98,8 @@ func (o *Orchestrator) autoApproveCSRs(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// <--- FIX: Point to the openstack-upi auth directory
-	kubeconfigPath := filepath.Join(o.workspaceDir, "openstack-upi", "auth", "kubeconfig") 
+	// <--- FIX: Point to the install-dir auth directory
+	kubeconfigPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeconfig") 
 	ocPath := filepath.Join(o.workspaceDir, "tools", "oc")
 
 	// Local pipeline execution: oc get csr | grep pending | xargs oc adm certificate approve

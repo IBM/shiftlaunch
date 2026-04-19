@@ -17,7 +17,7 @@ func Create(ctx context.Context, orch *orchestrator.Orchestrator, resume bool) e
 	}
 
 	// The Orchestrator's Deploy method now handles the linear pipeline natively
-	if err := orch.Deploy(resume); err != nil {
+	if err := orch.Deploy(ctx,resume); err != nil {
 		return err
 	}
 
