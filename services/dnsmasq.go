@@ -147,15 +147,15 @@ func NewDNSmasqManager(cfg *types.AgentConfig, daemonCfg *config.AgentDaemonConf
 // SetupServices configures the system-level dnsmasq records (DNS, DHCP, PXE Flags)
 func (m *DNSmasqManager) SetupServices(ctx context.Context) error {
 	// Configure DNS records
-	if err := m.writeAndRestart(ctx,"10", "dns", dnsConfigTemplate); err != nil {
+	if err := m.writeConfig(ctx,"10", "dns", dnsConfigTemplate); err != nil {
 		return err
 	}
 	// Configure DHCP reservations
-	if err := m.writeAndRestart(ctx,"20", "dhcp", dhcpConfigTemplate); err != nil {
+	if err := m.writeConfig(ctx,"20", "dhcp", dhcpConfigTemplate); err != nil {
 		return err
 	}
 	// Configure PXE service flags
-	return m.writeAndRestart(ctx,"30", "pxe", pxeConfigTemplate)
+	return m.writeConfig(ctx,"30", "pxe", pxeConfigTemplate)
 }
 
 // ConfigurePXEBoot handles the physical artifacts: grub2 structure, core.elf, images, and grub configs
@@ -197,12 +197,12 @@ func (m *DNSmasqManager) ConfigurePXEBoot(ctx context.Context,workspaceDir strin
 	m.executor.Execute(ctx,fmt.Sprintf("sudo chown -R nobody:nobody %s", clusterTftpDir))
 	m.executor.Execute(ctx,fmt.Sprintf("sudo restorecon -Rv %s", clusterTftpDir))
 
-	return m.executor.SystemctlRestart(ctx,"dnsmasq")
+	return nil
 }
 
 // --- Helper Functions ---
 
-func (m *DNSmasqManager) writeAndRestart(ctx context.Context,prefix, name, tmplStr string) error {
+func (m *DNSmasqManager) writeConfig(ctx context.Context, prefix, name, tmplStr string) error {
 	tmpl, err := template.New(name).Parse(tmplStr)
 	if err != nil {
 		return err
@@ -214,11 +214,7 @@ func (m *DNSmasqManager) writeAndRestart(ctx context.Context,prefix, name, tmplS
 	}
 
 	path := fmt.Sprintf("/etc/dnsmasq.d/%s-%s-%s.conf", prefix, m.cfg.OpenShift.ClusterName, name)
-	if err := m.executor.WriteFile(ctx, path, buf.Bytes(), 0644); err != nil {
-		return err
-	}
-
-	return m.executor.SystemctlRestart(ctx,"dnsmasq")
+	return m.executor.WriteFile(ctx, path, buf.Bytes(), 0644)
 }
 
 func (m *DNSmasqManager) prepareTemplateData(ctx context.Context) map[string]interface{} {
@@ -295,7 +291,7 @@ func (m *DNSmasqManager) prepareGrubData(ctx context.Context,node *types.NodeCon
 			"ignition.platform.id=metal",
 			"ignition.firstboot",
 			fmt.Sprintf("coreos.live.rootfs_url=http://%s:%d/%s/rhcos/rootfs.img", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName),
-			fmt.Sprintf("coreos.inst.ignition_url=http://%s:%d/%s/ignition/%s", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName, ign),
+			fmt.Sprintf("ignition.config.url=http://%s:%d/%s/ignition/%s", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName, ign),
 		}
 	} else {
 		if role == "worker" {
@@ -351,17 +347,23 @@ func (m *DNSmasqManager) CleanupLeases(ctx context.Context) {
 		}
 	}
 }
+// Restart cleanly restarts the dnsmasq service once
+func (m *DNSmasqManager) Restart(ctx context.Context) error {
+	m.executor.Execute(ctx, "sudo systemctl daemon-reload") // Good practice
+	return m.executor.SystemctlRestart(ctx, "dnsmasq")
+}
+
 // SetupDNS configures the DNS service records locally
 func (m *DNSmasqManager) SetupDNS(ctx context.Context) error {
-	return m.writeAndRestart(ctx,"10", "dns", dnsConfigTemplate)
+	return m.writeConfig(ctx, "10", "dns", dnsConfigTemplate)
 }
 
 // SetupDHCP configures DHCP reservations locally
 func (m *DNSmasqManager) SetupDHCP(ctx context.Context) error {
-	return m.writeAndRestart(ctx,"20", "dhcp", dhcpConfigTemplate)
+	return m.writeConfig(ctx, "20", "dhcp", dhcpConfigTemplate)
 }
 
 // SetupPXEService configures the dnsmasq TFTP/PXE settings
 func (m *DNSmasqManager) SetupPXEService(ctx context.Context) error {
-	return m.writeAndRestart(ctx,"30", "pxe", pxeConfigTemplate)
+	return m.writeConfig(ctx, "30", "pxe", pxeConfigTemplate)
 }

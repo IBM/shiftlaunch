@@ -49,7 +49,7 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 		}()
 		
 		o.logger.Info("Powering off LPARs...")
-		if err := provider.PowerOffNodes(context.Background()); err != nil {
+		if err := provider.PowerOffNodes(ctx); err != nil {
 			o.logger.Warn("Failed to power off some LPARs", "error", err)
 			phaseErr = err
 		}

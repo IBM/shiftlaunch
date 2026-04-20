@@ -199,7 +199,7 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				}
 			}()
 			
-			if err := provider.DiscoverMetadata(context.Background()); err != nil {
+			if err := provider.DiscoverMetadata(ctx); err != nil {
 				phaseErr = fmt.Errorf("failed to discover LPAR metadata from HMC: %w", err)
 				return
 			}
@@ -307,6 +307,14 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 			} else {
 				o.logger.Info(" -> Skipping PXE (User Managed)")
 			}
+			// --- FIX: Restart dnsmasq ONCE after all configs are written ---
+			if o.cfg.ManagedServices.DNS || o.cfg.ManagedServices.DHCP || o.cfg.ManagedServices.PXE {
+				o.logger.Info(" -> Restarting DNSmasq service...")
+				if err := dnsmasq.Restart(ctx); err != nil {
+					phaseErr = fmt.Errorf("failed to start dnsmasq: %w", err)
+					return
+				}
+			}
 		}()
 
 		o.endPhase(phaseExec, phaseErr)
@@ -378,7 +386,7 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 			// Re-discover metadata if resuming (UUIDs may not be populated)
 			if resume {
 				o.logger.Info("Re-discovering LPAR metadata for resume...")
-				if err := provider.DiscoverMetadata(context.Background()); err != nil {
+				if err := provider.DiscoverMetadata(ctx); err != nil {
 					phaseErr = fmt.Errorf("failed to re-discover LPAR metadata: %w", err)
 					return
 				}
@@ -394,7 +402,7 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 					continue
 				}
 
-				if err := provider.BootNode(context.Background(), node); err != nil {
+				if err := provider.BootNode(ctx, node); err != nil {
 					phaseErr = fmt.Errorf("HMC boot sequence failed for %s: %w", node.Hostname, err)
 					return
 				}
@@ -419,12 +427,12 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 		
 		var phaseErr error
 		func() {
-			if err := o.WaitForBootstrap(context.Background()); err != nil {
+			if err := o.WaitForBootstrap(ctx); err != nil {
 				phaseErr = err
 				return
 			}
 
-			if err := o.WaitForInstall(context.Background()); err != nil {
+			if err := o.WaitForInstall(ctx); err != nil {
 				phaseErr = err
 				return
 			}

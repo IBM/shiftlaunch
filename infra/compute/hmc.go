@@ -132,7 +132,7 @@ func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) erro
 			true,
 		)
 
-		_, err = h.hmcClient.PowerOffPartition(node.UUID, "Immediate", false, true)
+		_, err = h.hmcClient.PowerOffPartition(ctx, node.UUID, "Immediate", false, true)
 		if err != nil {
 			return fmt.Errorf("failed to power off LPAR: %w", err)
 		}
@@ -150,7 +150,7 @@ func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) erro
 	// STEP 1: Power cycle LPAR to make adapters visible to firmware
 	// =========================================================================
 	h.logger.Info("Power cycling LPAR to register adapters with firmware...")
-	_, err = h.hmcClient.PowerOnPartition(node.UUID, &hmc.PowerOnOptions{
+	_, err = h.hmcClient.PowerOnPartition(ctx, node.UUID, &hmc.PowerOnOptions{
 		ProfileUUID: profileUUID,
 		BootMode:    "of", // Boot to Open Firmware
 	}, true)
@@ -162,7 +162,7 @@ func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) erro
 	time.Sleep(20 * time.Second)
 
 	h.logger.Info("Powering off LPAR for profile query...")
-	_, err = h.hmcClient.PowerOffPartition(node.UUID, "Immediate", false, true)
+	_, err = h.hmcClient.PowerOffPartition(ctx, node.UUID, "Immediate", false, true)
 	if err != nil {
 		return fmt.Errorf("failed to power off LPAR: %w", err)
 	}
@@ -232,7 +232,7 @@ func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) erro
 		Netmask:      "0.0.0.0",
 	}
 
-	status, err := h.hmcClient.PowerOnPartition(node.UUID, options, true)
+	status, err := h.hmcClient.PowerOnPartition(ctx, node.UUID, options, true)
 	if err != nil {
 		return fmt.Errorf("failed to execute network boot: %w", err)
 	}
@@ -271,7 +271,7 @@ func (h *HMCProvider) PowerOffNodes(ctx context.Context) error {
 
 		// Send the immediate power off signal.
 		// If the LPAR is already off, the HMC returns an error which we catch and log as debug.
-		_, err := h.hmcClient.PowerOffPartition(node.UUID, "Immediate", false, true)
+		_, err := h.hmcClient.PowerOffPartition(ctx, node.UUID, "Immediate", false, true)
 		if err != nil {
 			h.logger.Warn("LPAR power off returned an error (may already be off)", "lpar", node.ExistingLPARName, "error", err)
 		} else {

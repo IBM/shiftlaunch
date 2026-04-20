@@ -37,9 +37,10 @@ func List() error {
 	}
 
 	fmt.Println("=== Managed Clusters ===")
-	fmt.Printf("%-20s %-15s %-12s %-20s %-10s %-25s %-20s\n", 
-		"CLUSTER NAME", "STATUS", "TYPE", "PHASE", "DURATION", "PRE-PROVISIONED", "LAST UPDATED")
-	fmt.Printf("%s\n", strings.Repeat("-", 128))
+	// --- FIX: Added "CLUSTER IP" column and adjusted spacing ---
+	fmt.Printf("%-20s %-15s %-16s %-12s %-20s %-10s %-25s %-20s\n", 
+		"CLUSTER NAME", "STATUS", "CLUSTER IP", "TYPE", "PHASE", "DURATION", "PRE-PROVISIONED", "LAST UPDATED")
+	fmt.Printf("%s\n", strings.Repeat("-", 145)) // Extended dash line for new column
 
 	visibleCount := 0
 
@@ -50,7 +51,7 @@ func List() error {
 
 		clusterName := entry.Name()
 
-		// Skip clusters marked as deleted to match the old shouldExposeCluster behavior
+		// Skip clusters marked as deleted to match the old shouldExposeCluster behavior [cite: 3]
 		deletedMarker := filepath.Join(workspaceBase, clusterName, ".deleted")
 		if _, err := os.Stat(deletedMarker); err == nil {
 			continue
@@ -62,9 +63,9 @@ func List() error {
 		// Try to load state
 		state, err := types.LoadState(clusterName)
 		if err != nil {
-			// Fallback row if state is unreadable but cluster exists
-			fmt.Printf("%-20s %-15s %-12s %-20s %-10s %-25s %-20s\n",
-				clusterName, "unknown", "N/A", "N/A", "N/A", "N/A", "N/A")
+			// --- FIX: Added "N/A" for the Cluster IP column in the fallback row ---
+			fmt.Printf("%-20s %-15s %-16s %-12s %-20s %-10s %-25s %-20s\n",
+				clusterName, "unknown", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A")
 			visibleCount++
 			continue
 		}
@@ -72,18 +73,25 @@ func List() error {
 		// Extract and format the pre_provisioned items and cluster type
 		clusterType := "Multi/LPAR" // Default
 		preProvStr := "Unknown"
+		clusterIP := "Unknown"      // --- FIX: Default value for Cluster IP ---
 
 		data, err := os.ReadFile(configFile)
 		if err == nil {
 			var cfg types.AgentConfig
 			if err := yaml.Unmarshal(data, &cfg); err == nil {
+				
+				// --- FIX: Extract the LoadBalancerIP (VIP) ---
+				if cfg.Network.LoadBalancerIP != "" {
+					clusterIP = cfg.Network.LoadBalancerIP
+				}
+
 				// Determine deployment type (SNO vs Multi-node)
 				deploymentType := "Multi"
 				if cfg.IsSNO() {
 					deploymentType = "SNO"
 				}
 
-				// Evaluate new ManagedServices flags (inverted logic from BYOI pre-provisioned)
+				// Evaluate new ManagedServices flags (inverted logic from BYOI pre-provisioned) [cite: 5]
 				var prepItems []string
 				if !cfg.ManagedServices.DNS {
 					prepItems = append(prepItems, "DNS")
@@ -113,7 +121,7 @@ func List() error {
 
 		// Format timestamp (Last Updated)
 		timestamp := "N/A"
-		// If EndTime exists, use it. Otherwise fallback to the file modification time.
+		// If EndTime exists, use it. Otherwise fallback to the file modification time. [cite: 6]
 		if state.EndTime != "" {
 			if t, err := time.Parse(time.RFC3339, state.EndTime); err == nil {
 				timestamp = t.Format("2006-01-02 15:04:05")
@@ -149,9 +157,11 @@ func List() error {
 		}
 
 		// Print the row
-		fmt.Printf("%-20s %-15s %-12s %-20s %-10s %-25s %-20s\n",
+		// --- FIX: Injected clusterIP into the print formatting ---
+		fmt.Printf("%-20s %-15s %-16s %-12s %-20s %-10s %-25s %-20s\n",
 			clusterName,
 			state.Status,
+			clusterIP,
 			clusterType,
 			state.CurrentPhase,
 			duration,
