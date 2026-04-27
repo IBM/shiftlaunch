@@ -54,7 +54,7 @@ func (l *LocalClient) WriteFile(ctx context.Context,path string, content []byte,
 	}
 
 	// Move into place with sudo (required for /etc/ directories)
-	mvCmd := fmt.Sprintf("sudo mv %s %s && sudo chmod %04o %s", tmpPath, path, perms, path)
+	mvCmd := fmt.Sprintf("sudo mv %s %s && sudo chmod %04o %s && sudo restorecon %s 2>/dev/null || true", tmpPath, path, perms, path, path)
 	if _, err := l.Execute(ctx,mvCmd); err != nil {
 		return fmt.Errorf("failed to move file into place: %w", err)
 	}

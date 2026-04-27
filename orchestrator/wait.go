@@ -33,7 +33,7 @@ func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error
 	defer cancel()
 
 	installerPath := filepath.Join(o.workspaceDir, "tools", "openshift-install")
-	targetDir := filepath.Join(o.workspaceDir, "install-dir") // <--- FIX: Point to the new directory
+	targetDir := filepath.Join(o.workspaceDir, "install-dir")
 
 	cmd := exec.CommandContext(timeoutCtx, installerPath, "wait-for", "bootstrap-complete", "--dir", targetDir, "--log-level=info")
 
@@ -51,7 +51,12 @@ func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error
 	}
 
 	spinner.Success("Bootstrap Complete!")
-	o.logger.Info(fmt.Sprintf("\n✓ Bootstrap Complete!\n%s\n", string(output)))
+	o.logger.Info("✓ Bootstrap Complete! (Details safely recorded to deployment.log)")
+	
+	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
+	o.logger.FileOnly().Write([]byte("\n=== BOOTSTRAP OUTPUT ===\n"))
+	o.logger.FileOnly().Write(output)
+	o.logger.FileOnly().Write([]byte("\n========================\n"))
 
 	if !o.cfg.IsSNO() {
 		pterm.Info.WithWriter(o.logger.TerminalOnly()).Println("Bootstrap node can now be powered off. The cluster will continue installation without it.")
@@ -92,7 +97,7 @@ func (o *Orchestrator) waitForInstallComplete(cancelCtx context.Context) error {
 	}
 
 	installerPath := filepath.Join(o.workspaceDir, "tools", "openshift-install")
-	targetDir := filepath.Join(o.workspaceDir, "install-dir") // <--- FIX: Point to the new directory
+	targetDir := filepath.Join(o.workspaceDir, "install-dir")
 
 	cmd := exec.CommandContext(timeoutCtx, installerPath, "wait-for", "install-complete", "--dir", targetDir, "--log-level=info")
 
@@ -110,6 +115,13 @@ func (o *Orchestrator) waitForInstallComplete(cancelCtx context.Context) error {
 	}
 
 	spinner.Success("Installation Complete!")
+	o.logger.Info("✓ Installation Complete! (Details safely recorded to deployment.log)")
+	
+	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
+	o.logger.FileOnly().Write([]byte("\n=== INSTALLER OUTPUT ===\n"))
+	o.logger.FileOnly().Write(output)
+	o.logger.FileOnly().Write([]byte("\n========================\n"))
+	
 	return nil
 }
 
@@ -153,7 +165,13 @@ func (o *Orchestrator) waitForAgentInstall(cancelCtx context.Context) error {
 	}
 
 	spinner.Success("Agent Installation Complete!")
-	o.logger.Info(fmt.Sprintf("\n✓ Agent Installation Complete!\n%s\n", string(output)))
+	o.logger.Info("✓ Agent Installation Complete! (Details safely recorded to deployment.log)")
+	
+	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
+	o.logger.FileOnly().Write([]byte("\n=== AGENT INSTALLER OUTPUT ===\n"))
+	o.logger.FileOnly().Write(output)
+	o.logger.FileOnly().Write([]byte("\n==============================\n"))
+	
 	return nil
 }
 
@@ -164,7 +182,6 @@ func (o *Orchestrator) autoApproveCSRs(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// <--- FIX: Point to the install-dir auth directory
 	kubeconfigPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeconfig") 
 	ocPath := filepath.Join(o.workspaceDir, "tools", "oc")
 

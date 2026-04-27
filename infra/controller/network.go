@@ -68,37 +68,87 @@ func (nm *NetworkManager) AddVIPAlias(ctx context.Context,iface, ip, cidr string
 	return nil
 }
 
-// RemoveVIPAlias prunes only the cluster VIP from the primary connection
-func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context,iface, ip, cidr, controllerIP string) error {
+// RemoveVIPAlias dynamically identifies and prunes all VIP aliases from the interface
+// using the kernel routing table subtraction method to guarantee the primary IP is preserved.
+func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, controllerIP string) error {
+	nm.logger.Info("Starting dynamic VIP cleanup using kernel routing table", "interface", iface)
+
+	// 1. Get the "Base IP" (The True Identity IP chosen by the kernel for outbound routing)
+	// Example command: ip route get 1.1.1.1 | grep -oP 'src \K\S+'
+	baseIPCmd := `ip route get 1.1.1.1 | awk -F"src " 'NR==1{split($2,a," "); print a[1]}'`
+	baseIPOut, err := nm.executor.Execute(ctx, baseIPCmd)
+	if err != nil {
+		return fmt.Errorf("failed to determine kernel Base IP: %v", err)
+	}
+	baseIP := strings.TrimSpace(baseIPOut)
+	if baseIP == "" {
+		return fmt.Errorf("kernel returned an empty Base IP for interface %s", iface)
+	}
+
+	nm.logger.Debug("Kernel Routing Analysis", "BaseIP", baseIP)
+
 	// --- CRITICAL SAFETY CHECK ---
 	// Prevent the orchestrator from pruning the controller's own primary IP
-	if ip == controllerIP {
-		nm.logger.Warn("SAFETY ABORT: Refusing to remove primary management IP", "ip", ip)
+	if ip == baseIP {
+		nm.logger.Warn("SAFETY ABORT: The requested VIP matches the kernel's Base IP. Refusing to remove.", "ip", ip)
 		return nil
 	}
 
-	prefix := ExtractCIDRPrefix(cidr)
-	fullIP := fmt.Sprintf("%s/%s", ip, prefix)
-
+	// 2. Discover the NetworkManager connection profile managing this interface
 	getConCmd := fmt.Sprintf("nmcli -t -f GENERAL.CONNECTION device show %s | head -n1 | cut -d: -f2", iface)
-	conName, _ := nm.executor.Execute(ctx,getConCmd)
-	conName = strings.TrimSpace(conName)
+	conNameOut, _ := nm.executor.Execute(ctx, getConCmd)
+	conName := strings.TrimSpace(conNameOut)
 
-	if conName != "" {
-		nm.logger.Info("Pruning persistent VIP from connection", "ip", fullIP, "connection", conName)
-		
-		// 1. Remove ONLY the specific VIP from the profile
-		delCmd := fmt.Sprintf("sudo nmcli connection modify \"%s\" -ipv4.addresses %s", conName, fullIP)
-		_, _ = nm.executor.Execute(ctx,delCmd)
-		
-		// 2. USE REAPPLY INSTEAD OF UP
-		reapplyCmd := fmt.Sprintf("sudo nmcli device reapply %s", iface)
-		if _, err := nm.executor.Execute(ctx,reapplyCmd); err != nil {
-			nm.logger.Debug("Reapply failed or unsupported, falling back to connection up...")
-			upCmd := fmt.Sprintf("sudo nmcli connection up \"%s\"", conName)
-			_, _ = nm.executor.Execute(ctx,upCmd)
+	if conName == "" {
+		nm.logger.Warn("Could not determine NetworkManager connection profile", "interface", iface)
+		return nil
+	}
+
+	// 3. Get ALL IPv4 addresses currently configured on the interface
+	getAllCmd := fmt.Sprintf("ip -o -4 addr show dev %s | awk '{print $4}'", iface)
+	allIPsOut, err := nm.executor.Execute(ctx, getAllCmd)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve IP addresses for interface %s: %v", iface, err)
+	}
+
+	// 4. The Subtraction Method: Destroy anything that is NOT the Base IP
+	allIPs := strings.Split(strings.TrimSpace(allIPsOut), "\n")
+	vipsRemoved := 0
+
+	for _, ipWithCidr := range allIPs {
+		ipWithCidr = strings.TrimSpace(ipWithCidr)
+		if ipWithCidr == "" {
+			continue
+		}
+
+		// Split the IP from its subnet mask (e.g., "10.20.181.100/24" -> "10.20.181.100")
+		parts := strings.Split(ipWithCidr, "/")
+		currentIP := parts[0]
+
+		if currentIP != baseIP {
+			nm.logger.Info("Targeting VIP for destruction", "vip", currentIP)
+
+			// Remove the VIP from the NetworkManager profile to ensure it doesn't return on reboot
+			delCmd := fmt.Sprintf("sudo nmcli connection modify \"%s\" -ipv4.addresses %s", conName, ipWithCidr)
+			_, _ = nm.executor.Execute(ctx, delCmd)
+			
+			vipsRemoved++
 		}
 	}
+
+	// 5. Apply the changes immediately without disrupting the connection
+	if vipsRemoved > 0 {
+		nm.logger.Info("Reapplying connection profile to flush destroyed VIPs", "connection", conName)
+		reapplyCmd := fmt.Sprintf("sudo nmcli device reapply %s", iface)
+		if _, err := nm.executor.Execute(ctx, reapplyCmd); err != nil {
+			nm.logger.Debug("Reapply failed or unsupported, falling back to connection up...")
+			upCmd := fmt.Sprintf("sudo nmcli connection up \"%s\"", conName)
+			_, _ = nm.executor.Execute(ctx, upCmd)
+		}
+	} else {
+		nm.logger.Info("No orphaned VIPs detected on interface. Cleanup complete.")
+	}
+
 	return nil
 }
 

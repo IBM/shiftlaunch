@@ -33,7 +33,7 @@ func (c *ControllerSetup) getRequiredPackages() []string {
 	var pkgs []string
 	
 	// We always need firewalld for port management
-	pkgs = append(pkgs, "firewalld")
+	pkgs = append(pkgs, "firewalld", "policycoreutils-python-utils")
 
 	// HTTPD is only needed for netboot staging
 	if c.cfg.Nodes.BootMethod != "iso" {

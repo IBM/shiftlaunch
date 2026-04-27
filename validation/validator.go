@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	hmc "github.com/sudeeshjohn/powerhmc-go"
@@ -526,6 +527,9 @@ func (v *Validator) validateLocalEnvironment(ctx context.Context) {
 }
 
 func (v *Validator) validateLocalDiskSpace(ctx context.Context) {
+	// On a fresh OS, httpd isn't installed yet, so /var/www/html won't exist.
+	// We create it silently here so the 'df' command doesn't crash.
+	v.exec.Execute(ctx, "sudo mkdir -p /var/www/html")
 	dfCmd := "df -BK --output=avail /var/www/html | tail -n 1 | tr -d 'K'"
 	output, err := v.exec.Execute(ctx,dfCmd)
 	if err != nil {
@@ -744,7 +748,8 @@ func (v *Validator) isValidHostname(hostname string) bool {
 	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
 	return hostnameRegex.MatchString(hostname)
 }
-// validateMediaRepositorySpace ensures the VIOS has enough space for Agent ISO files
+// validateMediaRepositorySpace ensures the VIOS has a Media Repository with enough space for Agent ISO files.
+// If it doesn't exist, it will intelligently auto-discover a Volume Group and create it.
 func (v *Validator) validateMediaRepositorySpace() {
 	v.log.Info("    Validating VIOS Media Repository capacity...")
 
@@ -755,8 +760,8 @@ func (v *Validator) validateMediaRepositorySpace() {
 
 	// Grab the system name from the first node to locate the active VIOS
 	systemName := nodes[0].SystemName
-	
-	// FIX: Use underscore first to drop the struct, grab the string UUID second
+
+	// Use underscore first to drop the struct, grab the string UUID second
 	_, sysUUID, err := v.hmcClient.GetManagedSystemByNameQuick(systemName, v.debug)
 	if err != nil {
 		v.warnings = append(v.warnings, fmt.Sprintf("Could not resolve system UUID for repository check: %v", err))
@@ -771,9 +776,11 @@ func (v *Validator) validateMediaRepositorySpace() {
 	}
 
 	var activeViosName string
+	var activeViosUUID string
 	for _, vios := range viosList {
 		if vios.PartitionState == "running" && vios.RMCState == "active" {
 			activeViosName = vios.PartitionName
+			activeViosUUID = vios.UUID
 			break
 		}
 	}
@@ -783,26 +790,82 @@ func (v *Validator) validateMediaRepositorySpace() {
 		return
 	}
 
-	// Calculate requirements: Agent ISO is roughly 1.5GB (1536 MB)
+	// Calculate requirements: Agent ISO is roughly 1.5GB (1536 MB) per node
 	nodeCount := len(nodes)
-	isoSizeMB := 1536 
-	requiredMB := isoSizeMB * nodeCount
+	requiredMB := 1536 * nodeCount
+	
+	// Force a sensible minimum of 10GB (10240 MB) so the repo isn't undersized
+	if requiredMB < 10240 {
+		requiredMB = 10240
+	}
+	requiredGB := float64(requiredMB) / 1024.0
 
+	// 1. Try to fetch the existing repository info
 	repoInfo, err := v.hmcClient.GetMediaRepositoryInfo(systemName, activeViosName, v.debug)
+	
+	// 2. If it fails, the repository is likely missing. Let's auto-create it!
 	if err != nil {
-		v.warnings = append(v.warnings, fmt.Sprintf("Could not verify Media Repository space on VIOS '%s': %v", activeViosName, err))
+		v.log.Info(fmt.Sprintf("      Media Repository not found on VIOS '%s'. Attempting to auto-create...", activeViosName))
+		
+		// Discover a suitable Volume Group
+		vgs, vgErr := v.hmcClient.GetVolumeGroups(activeViosUUID, v.debug)
+		if vgErr != nil {
+			v.warnings = append(v.warnings, fmt.Sprintf("Failed to list Volume Groups for auto-creating Media Repository: %v", vgErr))
+			return
+		}
+		
+		var targetVG string
+		// First pass: Prefer a VG that is NOT rootvg and has enough free space
+		for _, vg := range vgs {
+			if strings.ToLower(vg.GroupName) == "rootvg" {
+				continue
+			}
+			freeSpaceGB, parseErr := strconv.ParseFloat(vg.FreeSpace, 64)
+			if parseErr == nil && freeSpaceGB >= requiredGB {
+				targetVG = vg.GroupName
+				break
+			}
+		}
+		
+		// Second pass: Fallback to rootvg if absolutely necessary
+		if targetVG == "" {
+			for _, vg := range vgs {
+				freeSpaceGB, parseErr := strconv.ParseFloat(vg.FreeSpace, 64)
+				if parseErr == nil && freeSpaceGB >= requiredGB {
+					targetVG = vg.GroupName
+					v.log.Warn(fmt.Sprintf("      ⚠️ Warning: Using '%s' for Media Repository as no other VG has %.2f GB free", vg.GroupName, requiredGB))
+					break
+				}
+			}
+		}
+		
+		if targetVG == "" {
+			v.errors = append(v.errors, fmt.Sprintf("Cannot auto-create Media Repository on VIOS '%s': No Volume Group found with at least %.2f GB of free space.", activeViosName, requiredGB))
+			return
+		}
+		
+		// Create the Media Repository using the SDK
+		v.log.Info(fmt.Sprintf("      Auto-creating %d MB Media Repository in VG '%s' on VIOS '%s'...", requiredMB, targetVG, activeViosName))
+		createErr := v.hmcClient.CreateMediaRepository(systemName, activeViosUUID, activeViosName, targetVG, requiredMB, v.debug)
+		if createErr != nil {
+			v.errors = append(v.errors, fmt.Sprintf("Failed to auto-create Media Repository: %v", createErr))
+			return
+		}
+		
+		v.log.Info("      ✓ Media Repository created successfully!")
 		return
 	}
 
+	// 3. If repository already exists, validate its free space
 	v.log.Info(fmt.Sprintf("      Repository Size: %d MB | Free: %d MB | Required: %d MB (%d nodes)", 
 		repoInfo.SizeMB, repoInfo.FreeMB, requiredMB, nodeCount))
 
 	if repoInfo.FreeMB < requiredMB {
 		v.errors = append(v.errors, fmt.Sprintf(
-			"VIOS MEDIA REPOSITORY FULL: VIOS '%s' only has %d MB free, but %d MB is required (%d nodes * ~1.5GB).\n"+
+			"VIOS MEDIA REPOSITORY FULL: VIOS '%s' only has %d MB free, but %d MB is required.\n"+
 			"   Solution 1: Clean up old ISOs via HMC (rmvopt).\n"+
 			"   Solution 2: Expand the repository using 'chrep -size'.", 
-			activeViosName, repoInfo.FreeMB, requiredMB, nodeCount))
+			activeViosName, repoInfo.FreeMB, requiredMB))
 	} else {
 		v.log.Info("      ✓ Sufficient space available in VIOS Media Repository")
 	}

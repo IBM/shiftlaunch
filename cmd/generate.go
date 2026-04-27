@@ -163,6 +163,30 @@ nodes:
   
 {{end}}`
 
+const agentConfigTemplate = `# =============================================================================
+# ShiftLaunch Internal Daemon Configuration (agent.yaml)
+# =============================================================================
+# ShiftLaunch uses sensible internal defaults. If you need to override timeouts,
+# ports, or paths, modify this file. The binary will automatically detect it 
+# if it is placed in the same directory from where the command is run.
+# =============================================================================
+
+network:
+  http_port: 8080
+
+paths:
+  workspace_dir: "/opt/shiftlaunch/clusters"
+  dnsmasq_conf_dir: "/etc/dnsmasq.d"
+  haproxy_conf_dir: "/etc/haproxy/conf.d"
+  httpd_doc_root: "/var/www/html"
+  tftp_root: "/var/lib/tftpboot"
+  install_device: "/dev/sda"
+
+timeouts:
+  hmc_api_retries: 3
+  download_timeout_sec: 1800
+`
+
 type TemplateData struct {
 	IsSNO      bool
 	BootMethod string
@@ -181,7 +205,7 @@ func GenerateConfig(configType, bootMethod, outputPath string) error {
 		return fmt.Errorf("invalid boot method: '%s'. Must be 'iso' or 'netboot'", bootMethod)
 	}
 
-	// Safety check: Don't accidentally overwrite an existing config
+	// Safety check: Don't accidentally overwrite an existing cluster config
 	if _, err := os.Stat(outputPath); err == nil {
 		return fmt.Errorf("file '%s' already exists. Refusing to overwrite", outputPath)
 	}
@@ -191,6 +215,7 @@ func GenerateConfig(configType, bootMethod, outputPath string) error {
 		BootMethod: bootMethod,
 	}
 
+	// 1. Generate the Cluster Config (config.yaml)
 	tmpl, err := template.New("configGen").Parse(configTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to parse config template: %w", err)
@@ -205,7 +230,20 @@ func GenerateConfig(configType, bootMethod, outputPath string) error {
 		return fmt.Errorf("failed to write configuration file: %w", err)
 	}
 
-	fmt.Printf("✓ Successfully generated %s (%s) configuration template at: %s\n", configType, bootMethod, outputPath)
-	fmt.Println("Please edit this file with your specific infrastructure details before running the 'create' command.")
+	fmt.Printf("✓ Successfully generated %s (%s) cluster template at: %s\n", configType, bootMethod, outputPath)
+
+	// 2. Generate the Daemon Config (agent.yaml) if it doesn't already exist
+	agentPath := "agent.yaml"
+	if _, err := os.Stat(agentPath); os.IsNotExist(err) {
+		if err := os.WriteFile(agentPath, []byte(agentConfigTemplate), 0644); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to generate agent.yaml: %v\n", err)
+		} else {
+			fmt.Printf("✓ Successfully generated internal daemon config template at: %s\n", agentPath)
+		}
+	} else {
+		fmt.Println("ℹ 'agent.yaml' already exists in the current directory, skipping generation.")
+	}
+
+	fmt.Println("\nPlease edit these files with your specific infrastructure details before running the 'create' command.")
 	return nil
 }

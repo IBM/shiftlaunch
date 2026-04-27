@@ -321,6 +321,13 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				// 2. Allow HAProxy to route OpenShift's custom ports through SELinux
 				o.executor.Execute(ctx,"sudo setsebool -P haproxy_connect_any 1")
 
+				// 2.5 Allow HAProxy to BIND to custom OpenShift ports in SELinux Enforcing mode ---
+				// We use '|| true' so the orchestrator doesn't crash if the ports are already labeled
+				o.executor.Execute(ctx, "sudo semanage port -a -t http_port_t -p tcp 6443 2>/dev/null || true")
+				o.executor.Execute(ctx, "sudo semanage port -m -t http_port_t -p tcp 6443 2>/dev/null || true")
+				o.executor.Execute(ctx, "sudo semanage port -a -t http_port_t -p tcp 22623 2>/dev/null || true")
+				o.executor.Execute(ctx, "sudo semanage port -m -t http_port_t -p tcp 22623 2>/dev/null || true")
+
 				// 3. Bind the VIP to the controller's physical network interface
 				netMgr := controller.NewNetworkManager(o.executor, o.debug, o.logger)
 				vip := o.cfg.Network.LoadBalancerIP

@@ -1,4 +1,3 @@
-// config/config.go
 package config
 
 import (
@@ -33,11 +32,11 @@ type TimeoutConfig struct {
 	DownloadTimeoutSec int `mapstructure:"download_timeout_sec"`
 }
 
-// Load initializes Viper, sets defaults, and searches for agent.yaml in the local directory
+// Load initializes Viper, sets defaults, and silently loads agent.yaml if present
 func Load() (*AgentDaemonConfig, error) {
 	v := viper.New()
 
-	// 1. Set Sensible Defaults (These run if agent.yaml is missing or incomplete)
+	// 1. Set Sensible Defaults
 	v.SetDefault("network.http_port", 8080)
 	v.SetDefault("paths.workspace_dir", "/opt/shiftlaunch/clusters")
 	v.SetDefault("paths.dnsmasq_conf_dir", "/etc/dnsmasq.d")
@@ -52,7 +51,7 @@ func Load() (*AgentDaemonConfig, error) {
 	v.SetConfigName("agent") // Looks for agent.yaml
 	v.SetConfigType("yaml")
 
-	// 3. Search ONLY in the local working directory (as requested)
+	// 3. Search ONLY in the local working directory
 	v.AddConfigPath(".")
 
 	// 4. Enable Environment Variable overrides (e.g., SHIFTLAUNCH_NETWORK_HTTP_PORT=9090)
@@ -60,16 +59,13 @@ func Load() (*AgentDaemonConfig, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// 5. Attempt to read the config file
-	fileFound := true
+	// 5. Attempt to read the config file silently
 	if err := v.ReadInConfig(); err != nil {
 		// Ignore the error ONLY if the file was simply not found
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("fatal error parsing agent.yaml: %w", err)
 		}
-		// If we get here, agent.yaml wasn't found in the local directory.
-		// Viper will just use the hardcoded defaults.
-		fileFound = false
+		// Silently continue and use defaults if agent.yaml is missing
 	}
 
 	// 6. Unmarshal the merged config into our struct
@@ -78,7 +74,7 @@ func Load() (*AgentDaemonConfig, error) {
 		return nil, fmt.Errorf("unable to decode configuration into struct: %w", err)
 	}
 
-	// 7. Validate that critical fields are populated (either from file or defaults)
+	// 7. Validate that critical fields are populated
 	if config.Paths.WorkspaceDir == "" {
 		config.Paths.WorkspaceDir = "/opt/shiftlaunch/clusters"
 	}
@@ -105,10 +101,6 @@ func Load() (*AgentDaemonConfig, error) {
 	}
 	if config.Timeouts.DownloadTimeoutSec == 0 {
 		config.Timeouts.DownloadTimeoutSec = 1800
-	}
-
-	if !fileFound {
-		fmt.Println("⚠️  agent.yaml not found in current directory. Using default configuration.")
 	}
 
 	return &config, nil

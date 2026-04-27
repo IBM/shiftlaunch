@@ -235,8 +235,11 @@ func generateAgentISO(ctx context.Context, cfg *types.AgentConfig, exec *localex
 	}
 
 	// 3. Run openshift-install agent create image
-	installerPath := filepath.Join(workspaceDir, "tools", "openshift-install")
-	cmd := fmt.Sprintf("cd %s && %s agent create image --dir=. --log-level=info", targetDir, installerPath)
+	toolsDir := filepath.Join(workspaceDir, "tools")
+	installerPath := filepath.Join(toolsDir, "openshift-install")
+	
+	// Prepend the tools directory to the PATH just for this command execution
+	cmd := fmt.Sprintf("export PATH=%s:$PATH && cd %s && %s agent create image --dir=. --log-level=info", toolsDir, targetDir, installerPath)
 
 	if _, err := exec.Execute(ctx, cmd); err != nil {
 		return fmt.Errorf("failed to create agent ISO: %w", err)
