@@ -269,15 +269,15 @@ func GenerateConfig(configType, bootMethod, outputPath string) error {
 		return fmt.Errorf("failed to write configuration file: %w", err)
 	}
 
-	fmt.Printf("✓ Successfully generated %s (%s) cluster template at: %s\n", configType, bootMethod, outputPath)
+	fmt.Printf("Successfully generated %s (%s) cluster template at: %s\n", configType, bootMethod, outputPath)
 
 	// 2. Generate the Daemon Config (agent.yaml) if it doesn't already exist
 	agentPath := "agent.yaml"
 	if _, err := os.Stat(agentPath); os.IsNotExist(err) {
 		if err := os.WriteFile(agentPath, []byte(agentConfigTemplate), 0644); err != nil {
-			fmt.Printf("⚠️  Warning: Failed to generate agent.yaml: %v\n", err)
+			fmt.Printf(" Warning: Failed to generate agent.yaml: %v\n", err)
 		} else {
-			fmt.Printf("✓ Successfully generated internal daemon config template at: %s\n", agentPath)
+			fmt.Printf("Successfully generated internal daemon config template at: %s\n", agentPath)
 		}
 	} else {
 		fmt.Println("ℹ 'agent.yaml' already exists in the current directory, skipping generation.")

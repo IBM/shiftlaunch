@@ -80,13 +80,13 @@ func (v *Validator) Validate(ctx context.Context) error {
 	v.validateOpenShift()
 	v.validateNodes()
 
-	v.log.Info("✓ Configuration valid")
+	v.log.Info("Configuration valid")
 
 	// Phase 2: Local Controller Environment Validation
 	if v.exec != nil {
 		v.log.Info("Phase 2: Validating local controller environment...")
 		v.validateLocalEnvironment(ctx)
-		v.log.Info("✓ Local environment validated")
+		v.log.Info("Local environment validated")
 	}
 
 	// Phase 3: HMC Validation (HMC API-based)
@@ -96,7 +96,7 @@ func (v *Validator) Validate(ctx context.Context) error {
 		if v.cfg.Nodes.BootMethod == "iso" {
 			v.validateMediaRepositorySpace()
 		}
-		v.log.Info("✓ HMC infrastructure validated")
+		v.log.Info("HMC infrastructure validated")
 	}
 
 	// Phase 4: External Services Validation
@@ -106,7 +106,7 @@ func (v *Validator) Validate(ctx context.Context) error {
 		if hasExternalServices {
 			v.log.Info("Phase 4: Validating external services (BYOI mode)...")
 			v.validateExternalServices(ctx)
-			v.log.Info("✓ External services validated")
+			v.log.Info("External services validated")
 		}
 	}
 
@@ -552,7 +552,7 @@ func (v *Validator) validateLocalDiskSpace(ctx context.Context) {
 			fmt.Sprintf("INSUFFICIENT DISK SPACE: /var/www/html has only %.2f GB available, but at least %.0f GB is required.",
 				availableGB, requiredGB))
 	} else {
-		v.log.Info(fmt.Sprintf("  ✓ Controller has %.2f GB available in /var/www/html", availableGB))
+		v.log.Info(fmt.Sprintf("  Controller has %.2f GB available in /var/www/html", availableGB))
 	}
 }
 
@@ -616,7 +616,7 @@ func (v *Validator) validateBYOILPARs() {
 						"SAFETY LOCK: BYOI LPAR '%s' is currently RUNNING on system '%s'. Shiftlaunch refuses to overwrite a running LPAR to prevent accidental data loss. Please power it off manually before deploying.",
 						node.ExistingLPARName, node.SystemName))
 				} else {
-					v.log.Info(fmt.Sprintf("      ✓ LPAR '%s' exists on system '%s' (state: %s, role: %s)",
+					v.log.Info(fmt.Sprintf("      LPAR '%s' exists on system '%s' (state: %s, role: %s)",
 						node.ExistingLPARName, node.SystemName, lpar.PartitionState, node.Role))
 					validatedCount++
 				}
@@ -625,7 +625,7 @@ func (v *Validator) validateBYOILPARs() {
 	}
 
 	if len(v.errors) == 0 {
-		v.log.Info(fmt.Sprintf("    ✓ All %d pre-provisioned LPAR(s) validated successfully", validatedCount))
+		v.log.Info(fmt.Sprintf("    All %d pre-provisioned LPAR(s) validated successfully", validatedCount))
 	}
 }
 
@@ -667,7 +667,7 @@ func (v *Validator) validateExternalDNS(ctx context.Context) {
 		v.warnings = append(v.warnings, fmt.Sprintf(
 			"External DNS server %s may not be reachable or responding. Ensure DNS is properly configured before deployment.", dnsServer))
 	} else {
-		v.log.Info(fmt.Sprintf("      ✓ External DNS server %s is reachable", dnsServer))
+		v.log.Info(fmt.Sprintf("      External DNS server %s is reachable", dnsServer))
 	}
 }
 
@@ -718,7 +718,7 @@ func (v *Validator) validateExternalLoadBalancer(ctx context.Context) {
 				"External load balancer port %d (%s) at %s is not responding. This is expected before cluster deployment, but ensure load balancer is configured.",
 				p.port, p.name, vip))
 		} else {
-			v.log.Info(fmt.Sprintf("      ✓ Load balancer port %d (%s) is accessible", p.port, p.name))
+			v.log.Info(fmt.Sprintf("      Load balancer port %d (%s) is accessible", p.port, p.name))
 		}
 	}
 
@@ -749,7 +749,7 @@ func (v *Validator) isValidHostname(hostname string) bool {
 	return hostnameRegex.MatchString(hostname)
 }
 // validateMediaRepositorySpace ensures the VIOS has a Media Repository with enough space for Agent ISO files.
-// If it doesn't exist, it will intelligently auto-discover a Volume Group and create it.
+// If it doesn't exist, it verifies a Volume Group exists with sufficient space for Phase 5 to auto-create it.
 func (v *Validator) validateMediaRepositorySpace() {
 	v.log.Info("    Validating VIOS Media Repository capacity...")
 
@@ -761,7 +761,6 @@ func (v *Validator) validateMediaRepositorySpace() {
 	// Grab the system name from the first node to locate the active VIOS
 	systemName := nodes[0].SystemName
 
-	// Use underscore first to drop the struct, grab the string UUID second
 	_, sysUUID, err := v.hmcClient.GetManagedSystemByNameQuick(context.Background(), systemName, v.debug)
 	if err != nil {
 		v.warnings = append(v.warnings, fmt.Sprintf("Could not resolve system UUID for repository check: %v", err))
@@ -803,14 +802,14 @@ func (v *Validator) validateMediaRepositorySpace() {
 	// 1. Try to fetch the existing repository info
 	repoInfo, err := v.hmcClient.GetMediaRepositoryInfo(context.Background(), systemName, activeViosName, v.debug)
 	
-	// 2. If it fails, the repository is likely missing. Let's auto-create it!
+	// 2. If it fails, the repository is missing. Verify we HAVE the capacity to auto-create it later.
 	if err != nil {
-		v.log.Info(fmt.Sprintf("      Media Repository not found on VIOS '%s'. Attempting to auto-create...", activeViosName))
+		v.log.Info(fmt.Sprintf("      Media Repository not found on VIOS '%s'. Verifying auto-creation capacity...", activeViosName))
 		
 		// Discover a suitable Volume Group
 		vgs, vgErr := v.hmcClient.GetVolumeGroups(context.Background(), activeViosUUID, v.debug)
 		if vgErr != nil {
-			v.warnings = append(v.warnings, fmt.Sprintf("Failed to list Volume Groups for auto-creating Media Repository: %v", vgErr))
+			v.warnings = append(v.warnings, fmt.Sprintf("Failed to list Volume Groups to verify auto-creation: %v", vgErr))
 			return
 		}
 		
@@ -833,7 +832,7 @@ func (v *Validator) validateMediaRepositorySpace() {
 				freeSpaceGB, parseErr := strconv.ParseFloat(vg.FreeSpace, 64)
 				if parseErr == nil && freeSpaceGB >= requiredGB {
 					targetVG = vg.GroupName
-					v.log.Warn(fmt.Sprintf("      ⚠️ Warning: Using '%s' for Media Repository as no other VG has %.2f GB free", vg.GroupName, requiredGB))
+					v.log.Warn(fmt.Sprintf("      Warning: Will use '%s' for Media Repository as no other VG has %.2f GB free", vg.GroupName, requiredGB))
 					break
 				}
 			}
@@ -844,15 +843,7 @@ func (v *Validator) validateMediaRepositorySpace() {
 			return
 		}
 		
-		// Create the Media Repository using the SDK
-		v.log.Info(fmt.Sprintf("      Auto-creating %d MB Media Repository in VG '%s' on VIOS '%s'...", requiredMB, targetVG, activeViosName))
-		createErr := v.hmcClient.CreateMediaRepository(context.Background(), systemName, activeViosUUID, activeViosName, targetVG, requiredMB, v.debug)
-		if createErr != nil {
-			v.errors = append(v.errors, fmt.Sprintf("Failed to auto-create Media Repository: %v", createErr))
-			return
-		}
-		
-		v.log.Info("      ✓ Media Repository created successfully!")
+		v.log.Info(fmt.Sprintf("      ✓ Sufficient space found in VG '%s'. ShiftLaunch will auto-create the repository during deployment.", targetVG))
 		return
 	}
 

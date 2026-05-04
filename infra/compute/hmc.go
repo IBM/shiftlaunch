@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ func (h *HMCProvider) GetHMCClient() *hmc.HmcRestClient {
 
 // DiscoverMetadata loops through your nodes and queries the HMC for network adapter details
 func (h *HMCProvider) DiscoverMetadata(ctx context.Context) error {
-	h.logger.Info("🔍 Discovering LPAR metadata from HMC...")
+	h.logger.Info("Discovering LPAR metadata from HMC...")
 
 	for _, node := range h.cfg.GetAllNodes() {
 		h.logger.Debug("Querying", "system", node.SystemName, "lpar", node.ExistingLPARName)
@@ -77,7 +78,7 @@ func (h *HMCProvider) DiscoverMetadata(ctx context.Context) error {
 		node.MACAddress = hmc.FormatMACAddress(adapters[0].MACAddress)
 		node.LocationCode = adapters[0].LocationCode
 
-		h.logger.Info("✓ Discovered", "lpar", node.ExistingLPARName, "mac", node.MACAddress, "uuid", node.UUID)
+		h.logger.Info("Discovered", "lpar", node.ExistingLPARName, "mac", node.MACAddress, "uuid", node.UUID)
 		
 		// Save discovered node to state file
 		if h.stateManager != nil {
@@ -192,7 +193,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 
 	// Power off LPAR if it's in any active state
 	if lparDetailed.PartitionState == "running" || lparDetailed.PartitionState == "open firmware" {
-		h.logger.Info("⚠️  LPAR is active. Powering off before network boot...", "state", lparDetailed.PartitionState)
+		h.logger.Info(" LPAR is active. Powering off before network boot...", "state", lparDetailed.PartitionState)
 
 		h.logger.Info("Closing virtual terminal...")
 		_ = h.hmcClient.CloseVirtualTerminalViaSsh(
@@ -208,7 +209,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 		if err != nil {
 			return fmt.Errorf("failed to power off LPAR: %w", err)
 		}
-		h.logger.Info("✓ LPAR powered off successfully")
+		h.logger.Info("LPAR powered off successfully")
 		time.Sleep(5 * time.Second)
 	}
 
@@ -272,7 +273,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 	}
 
 	authoritativeLocationCode := bootDevices[0].LocationCode
-	h.logger.Info("✓ Authoritative location code found", "location", authoritativeLocationCode)
+	h.logger.Info("Authoritative location code found", "location", authoritativeLocationCode)
 
 	// =========================================================================
 	// STEP 3: Network boot using authoritative location code
@@ -309,7 +310,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 		return fmt.Errorf("failed to execute network boot: %w", err)
 	}
 
-	h.logger.Info("✓ Network boot initiated successfully", "lpar", node.ExistingLPARName, "status", status)
+	h.logger.Info("Network boot initiated successfully", "lpar", node.ExistingLPARName, "status", status)
 
 	h.logger.Info("Saving profile to persist configuration...")
 	_ = h.hmcClient.SaveCurrentLparConfig(ctx, node.UUID, "default_profile", true, true)
@@ -347,12 +348,18 @@ func (h *HMCProvider) PowerOffNodes(ctx context.Context) error {
 		if err != nil {
 			h.logger.Warn("LPAR power off returned an error (may already be off)", "lpar", node.ExistingLPARName, "error", err)
 		} else {
-			h.logger.Info("✓ Power off signal accepted", "lpar", node.ExistingLPARName)
+			h.logger.Info("Power off signal accepted", "lpar", node.ExistingLPARName)
 			powerOffCount++
 		}
 	}
 	
-	h.logger.Info("Power off complete", "powered_off", powerOffCount, "skipped", skippedCount, "total", len(nodes))
+	h.logger.Info("Power off signals sent", "powered_off", powerOffCount, "skipped", skippedCount, "total", len(nodes))
+
+	if powerOffCount > 0 {
+		h.logger.Info("Waiting 15 seconds for LPARs to fully transition to powered-off state...")
+		time.Sleep(15 * time.Second)
+	}
+	
 	return nil
 }
 
@@ -383,9 +390,9 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 		return fmt.Errorf("failed to ensure viosadmin user: %w", err)
 	}
 	if viosUserCreated {
-		h.logger.Info("✓ viosadmin user created", "username", viosUsername)
+		h.logger.Info("viosadmin user created", "username", viosUsername)
 	} else {
-		h.logger.Info("✓ viosadmin user already exists", "username", viosUsername)
+		h.logger.Info("viosadmin user already exists", "username", viosUsername)
 	}
 	
 	// Step 3: Get or select active VIOS (reuse same VIOS for all nodes)
@@ -486,7 +493,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 		
 		// Mark this VIOS as mounted
 		h.viosMounted[viosUUID] = true
-		h.logger.Info("✓ NFS mounted successfully")
+		h.logger.Info("NFS mounted successfully")
 		
 		// Save NFS mount to state file
 		if h.stateManager != nil {
@@ -529,9 +536,14 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 			}
 		}
 	} else {
-		h.logger.Info("✓ NFS already mounted on this VIOS, skipping mount")
+		h.logger.Info("NFS already mounted on this VIOS, skipping mount")
 	}
-	
+	// ========================================================================
+	// STEP 6.5: ENSURE MEDIA REPOSITORY EXISTS
+	// ========================================================================
+	if err := h.ensureMediaRepository(ctx, node.SystemName, viosUUID, viosName); err != nil {
+		return fmt.Errorf("failed to ensure media repository exists: %w", err)
+	}
 	// ========================================================================
 	// STEP 7: CREATE UNIQUE OPTICAL MEDIA FOR THIS NODE
 	// ========================================================================
@@ -567,7 +579,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	if err != nil {
 		return fmt.Errorf("failed to create optical media: %w", err)
 	}
-	h.logger.Info("✓ Optical media created successfully", "media", mediaName)
+	h.logger.Info("Optical media created successfully", "media", mediaName)
 	
 	// ========================================================================
 	// STEP 8: MAP OPTICAL MEDIA TO LPAR (With LBYL Check)
@@ -593,7 +605,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	}
 
 	if alreadyMapped {
-		h.logger.Info("✓ Optical media is already mapped to LPAR. Skipping mapping step.")
+		h.logger.Info("Optical media is already mapped to LPAR. Skipping mapping step.")
 	} else {
 		h.logger.Info("Mapping optical media to LPAR", "lpar", node.ExistingLPARName, "media", mediaName)
 		
@@ -602,7 +614,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 			return fmt.Errorf("failed to map optical media: %w", err)
 		}
 		
-		h.logger.Info("✓ Optical media mapped successfully")
+		h.logger.Info("Optical media mapped successfully")
 	}
 	
 	// ========================================================================
@@ -625,7 +637,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	if err != nil {
 		h.logger.Warn("Failed to set boot string (may require manual SMS boot)", "error", err)
 	} else {
-		h.logger.Info("✓ Boot string set to 'cd/dvd-all'")
+		h.logger.Info("Boot string set to 'cd/dvd-all'")
 	}
 
 	// ========================================================================
@@ -773,7 +785,8 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 	
 	// Get viosadmin credentials from state file or ensure they exist
 	var viosUsername, viosPassword string
-	if state, err := h.stateManager.LoadState(); err == nil && state != nil && state.VIOSAdminUsername != "" {
+	// --- FIX: Ensure we don't accept an empty password from a corrupted state file ---
+	if state, err := h.stateManager.LoadState(); err == nil && state != nil && state.VIOSAdminUsername != "" && state.VIOSAdminPassword != "" {
 		// Use credentials from state file
 		viosUsername = state.VIOSAdminUsername
 		viosPassword = state.VIOSAdminPassword
@@ -782,9 +795,8 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 		// Ensure viosadmin user exists
 		var created bool
 		viosUsername, viosPassword, created, err = h.hmcClient.EnsureVIOSAdminUser(ctx, h.cfg.HMC.Username, h.cfg.HMC.Password, h.debug)
-		if err != nil {
-			h.logger.Warn("Failed to get viosadmin credentials, cleanup may fail", "error", err)
-			// Continue with cleanup attempt using default credentials
+		if err != nil || viosPassword == "" {
+			h.logger.Warn("Failed to get viosadmin credentials via API, falling back to default", "error", err)
 			viosUsername, viosPassword = h.hmcClient.GetVIOSAdminCredentials()
 		} else if created {
 			h.logger.Info("Created viosadmin user for cleanup", "username", viosUsername)
@@ -933,5 +945,62 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 
 	// Clear memory mapping so Orchestrator doesn't accidentally save it back 
 	h.isoMappings = nil
+	return nil
+}
+// ensureMediaRepository checks if the VIOS Media Repository exists, and auto-creates it if missing
+func (h *HMCProvider) ensureMediaRepository(ctx context.Context, systemName, viosUUID, viosName string) error {
+	// Check if repo exists
+	_, err := h.hmcClient.GetMediaRepositoryInfo(ctx, systemName, viosName, h.debug)
+	if err == nil {
+		return nil // Repository already exists
+	}
+
+	h.logger.Info("Media Repository not found. Auto-creating...", "vios", viosName)
+	
+	// Calculate size requirements
+	nodes := h.cfg.GetAllNodes()
+	requiredMB := 1536 * len(nodes)
+	if requiredMB < 10240 {
+		requiredMB = 10240
+	}
+	requiredGB := float64(requiredMB) / 1024.0
+
+	// Find suitable Volume Group
+	vgs, err := h.hmcClient.GetVolumeGroups(ctx, viosUUID, h.debug)
+	if err != nil {
+		return fmt.Errorf("failed to list volume groups: %w", err)
+	}
+
+	var targetVG string
+	for _, vg := range vgs {
+		if strings.ToLower(vg.GroupName) == "rootvg" { continue }
+		freeSpaceGB, parseErr := strconv.ParseFloat(vg.FreeSpace, 64)
+		if parseErr == nil && freeSpaceGB >= requiredGB {
+			targetVG = vg.GroupName
+			break
+		}
+	}
+
+	if targetVG == "" {
+		for _, vg := range vgs {
+			freeSpaceGB, parseErr := strconv.ParseFloat(vg.FreeSpace, 64)
+			if parseErr == nil && freeSpaceGB >= requiredGB {
+				targetVG = vg.GroupName
+				h.logger.Warn("Using rootvg for Media Repository as no other VG has enough free space", "vg", vg.GroupName)
+				break
+			}
+		}
+	}
+
+	if targetVG == "" {
+		return fmt.Errorf("no volume group found with at least %.2f GB of free space", requiredGB)
+	}
+
+	h.logger.Info("Creating Media Repository", "size_mb", requiredMB, "vg", targetVG)
+	if err := h.hmcClient.CreateMediaRepository(ctx, systemName, viosUUID, viosName, targetVG, requiredMB, h.debug); err != nil {
+		return fmt.Errorf("failed to create media repository: %w", err)
+	}
+
+	h.logger.Info("✓ Media Repository created successfully")
 	return nil
 }

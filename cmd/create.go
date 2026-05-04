@@ -8,12 +8,15 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sudeeshjohn/shiftlaunch/logger"
+	"github.com/sudeeshjohn/shiftlaunch/orchestrator"
 	"github.com/sudeeshjohn/shiftlaunch/types"
 )
 
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Execute cluster deployment pipeline",
+	SilenceUsage: true,
 	Long: `Execute the cluster deployment pipeline. Automatically resumes if a partial
 deployment is detected.
 
@@ -65,6 +68,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		log.Info("Cluster was previously deleted. Wiping directory for a fresh deployment...", "cluster", cfg.OpenShift.ClusterName)
 		os.RemoveAll(workspaceDir)
 		os.MkdirAll(workspaceDir, 0755)
+		
+		// Recreate logger after workspace cleanup to ensure deployment.log is created
+		logFilePath := filepath.Join(workspaceDir, "deployment.log")
+		newLogger, err := logger.New(debug, logFilePath)
+		if err != nil {
+			log.Warn("Failed to recreate logger after workspace cleanup", "error", err)
+		} else {
+			// Update orchestrator with new logger
+			orch = orchestrator.NewOrchestrator(cfg, daemonCfg, newLogger, workspaceDir, debug)
+			log = orch.GetLogger()
+			log.Info("Logger recreated after workspace cleanup")
+		}
 	}
 
 	managedMarker := filepath.Join(workspaceDir, ".managed")
@@ -129,7 +144,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if autoResume {
 		log.Info("=== Resuming Cluster Deployment ===")
 	} else {
-		log.Info("=== Starting Cluster Deployment ===")
+		log.Info("=== Starting New Cluster Deployment ===")
 	}
 
 	cmdStartTime := time.Now()

@@ -67,19 +67,10 @@ func (o *Orchestrator) GetDebug() bool {
 }
 
 // saveState records phase completion to the local state.json file
-// Reloads state first to preserve any updates made by other components (e.g., ISO mappings)
 func (o *Orchestrator) saveState(phase string) {
-	// Reload state to get any updates from other components
+	// --- CRITICAL FIX: Sync completely instead of manually copying specific fields ---
 	if currentState, err := o.stateManager.LoadState(); err == nil && currentState != nil {
-		// Preserve updates from other components
-		o.state.ISOMappings = currentState.ISOMappings
-		o.state.NFSMounts = currentState.NFSMounts
-		o.state.DiscoveredNodes = currentState.DiscoveredNodes
-		o.state.ConfiguredServices = currentState.ConfiguredServices
-		o.state.VIOSAdminUsername = currentState.VIOSAdminUsername
-		o.state.VIOSAdminPassword = currentState.VIOSAdminPassword
-		o.state.VIOSAdminCreated = currentState.VIOSAdminCreated
-		o.state.VIOSAdminCheckedAt = currentState.VIOSAdminCheckedAt
+		o.state = currentState 
 	}
 	
 	o.state.CurrentPhase = phase
@@ -158,15 +149,20 @@ func (o *Orchestrator) endPhase(phaseExec *types.PhaseExecution, err error) {
 		phaseExec.Status = "success"
 	}
 	
+	// --- CRITICAL FIX: Sync in-memory state with the disk to preserve provider updates ---
+	if currentState, loadErr := o.stateManager.LoadState(); loadErr == nil && currentState != nil {
+		o.state = currentState 
+	}
+	
 	o.stateManager.AddPhaseExecution(o.state, *phaseExec)
 	o.stateManager.SaveState(o.state)
 }
 
 // Deploy executes the linear installation pipeline
-func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
+func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// Check if cluster was previously deleted
 	if o.stateManager.IsDeleted() && !resume {
-		o.logger.Info("⚠️  Cluster was previously deleted. Clearing deleted marker for new deployment...", "cluster", o.cfg.OpenShift.ClusterName)
+		o.logger.Info(" Cluster was previously deleted. Clearing deleted marker for new deployment...", "cluster", o.cfg.OpenShift.ClusterName)
 		if err := o.stateManager.ClearDeleted(); err != nil {
 			return fmt.Errorf("failed to clear deleted marker: %w", err)
 		}
@@ -207,7 +203,7 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 		}
 	}()
 
-	o.logger.Info("🚀 Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
+	o.logger.Info("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
 
 	// --- PHASE 0: VALIDATION (Only for fresh deployments) ---
 	if !resume || len(o.state.CompletedPhases) == 0 {
@@ -220,7 +216,7 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 			// Check if VIP is configured on interface
 			iface := o.cfg.Controller.NetworkInterface
 			if iface != "" {
-				output, err := o.executor.Execute(ctx,fmt.Sprintf("ip addr show %s", iface))
+				output, err := o.executor.Execute(ctx, fmt.Sprintf("ip addr show %s", iface))
 				if err == nil && strings.Contains(output, o.cfg.Network.LoadBalancerIP+"/") {
 					// VIP is configured - check which cluster is using it
 					conflictingCluster := o.findClusterUsingVIP(o.cfg.Network.LoadBalancerIP)
@@ -240,11 +236,11 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 					o.cfg.Network.LoadBalancerIP, conflictingCluster)
 			}
 			
-			o.logger.Info("✓ VIP is available", "vip", o.cfg.Network.LoadBalancerIP)
+			o.logger.Info("VIP is available", "vip", o.cfg.Network.LoadBalancerIP)
 		}
 	}
 
-// --- PHASE 1: DISCOVERY ---
+	// --- PHASE 1: DISCOVERY ---
 	if !resume || !contains(o.state.CompletedPhases, "discovery") {
 		phaseExec := o.startPhase("discovery")
 		o.logger.Info("\n[Phase 1] Pre-Flight & HMC Discovery")
@@ -274,13 +270,25 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 		}
 		o.saveState("discovery")
 	}
+
 	// --- PHASE 2: DOWNLOADS ---
-	if !resume || !contains(o.state.CompletedPhases, "downloads") {
+	needsDownloads := !resume || !contains(o.state.CompletedPhases, "downloads")
+
+	// --- FIX: LBYL Safety Check for Missing Binaries ---
+	if !needsDownloads {
+		installerPath := filepath.Join(o.workspaceDir, "tools", "openshift-install")
+		if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+			o.logger.Warn(" Missing required OpenShift binaries in workspace. Forcing download phase recovery...")
+			needsDownloads = true
+		}
+	}
+
+	if needsDownloads {
 		phaseExec := o.startPhase("downloads")
 		o.logger.Info("\n[Phase 2] Downloading OpenShift Artifacts")
 		
 		downloader := services.NewDownloader(o.cfg, o.daemonCfg, o.executor, o.logger)
-		phaseErr := downloader.DownloadAll(ctx,o.workspaceDir)
+		phaseErr := downloader.DownloadAll(ctx, o.workspaceDir)
 		
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
@@ -323,33 +331,25 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				
 				o.logger.Info(" -> Configuring Local HAProxy...")
 
-				// 1. Allow HAProxy to bind to the VIP immediately (fixes the systemd crash)
-				o.executor.Execute(ctx,"sudo sysctl -w net.ipv4.ip_nonlocal_bind=1")
-				
-				// 2. Allow HAProxy to route OpenShift's custom ports through SELinux
-				o.executor.Execute(ctx,"sudo setsebool -P haproxy_connect_any 1")
-
-				// 2.5 Allow HAProxy to BIND to custom OpenShift ports in SELinux Enforcing mode ---
-				// We use '|| true' so the orchestrator doesn't crash if the ports are already labeled
+				o.executor.Execute(ctx, "sudo sysctl -w net.ipv4.ip_nonlocal_bind=1")
+				o.executor.Execute(ctx, "sudo setsebool -P haproxy_connect_any 1")
 				o.executor.Execute(ctx, "sudo semanage port -a -t http_port_t -p tcp 6443 2>/dev/null || true")
 				o.executor.Execute(ctx, "sudo semanage port -m -t http_port_t -p tcp 6443 2>/dev/null || true")
 				o.executor.Execute(ctx, "sudo semanage port -a -t http_port_t -p tcp 22623 2>/dev/null || true")
 				o.executor.Execute(ctx, "sudo semanage port -m -t http_port_t -p tcp 22623 2>/dev/null || true")
 
-				// 3. Bind the VIP to the controller's physical network interface
 				netMgr := controller.NewNetworkManager(o.executor, o.debug, o.logger)
 				vip := o.cfg.Network.LoadBalancerIP
 				iface := o.cfg.Controller.NetworkInterface
 				cidr := o.cfg.Network.MachineCIDR
 				
-				if err := netMgr.AddVIPAlias(ctx,iface, vip, cidr); err != nil {
+				if err := netMgr.AddVIPAlias(ctx, iface, vip, cidr); err != nil {
 					o.trackServiceEnd(haproxySvc, err, "")
 					phaseErr = fmt.Errorf("FATAL: Failed to configure VIP alias '%s' on interface '%s': %w", vip, iface, err)
 					return
 				}
 
-				// 4. Generate config and start the service
-				if err := services.SetupHAProxy(ctx,o.cfg, o.executor); err != nil {
+				if err := services.SetupHAProxy(ctx, o.cfg, o.executor); err != nil {
 					o.trackServiceEnd(haproxySvc, err, "")
 					phaseErr = err
 					return
@@ -363,7 +363,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 
 			dnsmasq := services.NewDNSmasqManager(o.cfg, o.daemonCfg, o.executor)
 
-			// Track DNS configuration
 			if o.cfg.ManagedServices.DNS {
 				dnsSvc := o.trackServiceStart("dns", "dns", true)
 				dnsSvc.ServiceName = "dnsmasq"
@@ -382,7 +381,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				o.trackServiceEnd(skipSvc, nil, "User managed")
 			}
 
-			// Track DHCP configuration
 			if o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "iso" {
 				dhcpSvc := o.trackServiceStart("dhcp", "dhcp", true)
 				dhcpSvc.ServiceName = "dnsmasq"
@@ -405,7 +403,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				o.trackServiceEnd(skipSvc, nil, skipReason)
 			}
 
-			// Track PXE configuration
 			if o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "iso" {
 				pxeSvc := o.trackServiceStart("pxe", "pxe", true)
 				pxeSvc.ServiceName = "dnsmasq"
@@ -437,7 +434,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 			needsDHCP := o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "iso"
 			needsPXE := o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "iso"
 
-			// Track dnsmasq restart
 			if o.cfg.ManagedServices.DNS || needsDHCP || needsPXE {
 				restartSvc := o.trackServiceStart("dnsmasq-restart", "service-restart", true)
 				restartSvc.ServiceName = "dnsmasq"
@@ -460,13 +456,21 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 	}
 
 	// --- PHASE 4: IGNITION GENERATION ---
-	if !resume || !contains(o.state.CompletedPhases, "ignition") {
+	needsIgnition := !resume || !contains(o.state.CompletedPhases, "ignition")
+
+	if !needsIgnition {
+		if _, err := os.Stat(filepath.Join(o.workspaceDir, "install-dir")); os.IsNotExist(err) {
+			o.logger.Warn("Missing installation artifacts in workspace. Forcing ignition generation phase recovery...")
+			needsIgnition = true
+		}
+	}
+
+	if needsIgnition {
 		phaseExec := o.startPhase("ignition")
 		o.logger.Info("\n[Phase 4] Generating OpenShift Ignition Payload")
 		
 		var phaseErr error
 		func() {
-			// Track ignition generation
 			ignSvc := o.trackServiceStart("ignition-generation", "ignition", true)
 			if err := services.GenerateIgnition(ctx, o.cfg, o.executor, o.workspaceDir); err != nil {
 				o.trackServiceEnd(ignSvc, err, "")
@@ -476,7 +480,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 			o.trackServiceEnd(ignSvc, nil, "Generated ignition configs for all nodes")
 
 			if o.cfg.Nodes.BootMethod != "iso" {
-				// Track HTTP server setup
 				httpSvc := o.trackServiceStart("http-server", "http", true)
 				httpSvc.ServiceName = "httpd"
 				httpSvc.ConfigFile = "/etc/httpd/conf.d/shiftlaunch.conf"
@@ -508,7 +511,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				skipSvc := o.trackServiceStart("http-server", "http", false)
 				o.trackServiceEnd(skipSvc, nil, "Not required for Agent ISO")
 				
-				// Setup NFS server for ISO boot
 				if o.cfg.ManagedServices.NFS {
 					nfsSvc := o.trackServiceStart("nfs-server", "nfs", true)
 					nfsSvc.ServiceName = "nfs-server"
@@ -550,14 +552,12 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				phaseErr = err
 				return
 			}
-			// Ensure HMC session is cleaned up after boot phase
 			defer func() {
 				if hmcProvider, ok := provider.(*compute.HMCProvider); ok {
 					hmcProvider.Cleanup()
 				}
 			}()
 
-			// Re-discover metadata if resuming (UUIDs may not be populated)
 			if resume {
 				o.logger.Info("Re-discovering LPAR metadata for resume...")
 				if err := provider.DiscoverMetadata(ctx); err != nil {
@@ -566,11 +566,9 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 				}
 			}
 
-			// Iterate through nodes and check individual boot states
 			for _, node := range o.cfg.GetAllNodes() {
 				bootMarker := "booted_" + node.Hostname
 				
-				// Skip this specific node if it was successfully booted in a previous run
 				if resume && contains(o.state.CompletedPhases, bootMarker) {
 					o.logger.Info("Skipping already booted node", "node", node.Hostname)
 					continue
@@ -581,7 +579,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 					return
 				}
 				
-				// Mark this specific node as successfully booted in state.json
 				o.saveState(bootMarker)
 			}
 		}()
@@ -590,7 +587,6 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 		if phaseErr != nil {
 			return phaseErr
 		}
-		// Mark the entire phase as fully complete
 		o.saveState("boot")
 	}
 
@@ -618,10 +614,11 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 		}
 		o.saveState("wait")
 	}
+
 	// --- PHASE 7: POST-INSTALL CLEANUP ---
 	if o.cfg.Nodes.BootMethod == "iso" && (!resume || !contains(o.state.CompletedPhases, "iso_cleanup")) {
 		phaseExec := o.startPhase("iso_cleanup")
-		o.logger.Info("\n[Phase 7] Cleaning up VIOS ISO Mappings")
+		o.logger.Info("[Phase 7] Cleaning up VIOS ISO Mappings")
 		
 		var phaseErr error
 		func() {
@@ -639,11 +636,9 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 			if hmcProvider, ok := provider.(*compute.HMCProvider); ok {
 				if err := hmcProvider.CleanupISOMappings(ctx); err != nil {
 					o.logger.Warn("Failed to clean up ISO mappings, manual VIOS cleanup may be required", "error", err)
-					// We don't fail the deployment here, as OpenShift is already running
 				}
 			}
 
-			// --- NEW: Clean up the local NFS export on the Controller ---
 			if o.cfg.ManagedServices.NFS {
 				o.logger.Info("Cleaning up local NFS configuration on controller...")
 				nfsMgr := services.NewNFSManager(o.cfg, o.executor, o.logger, o.workspaceDir)
@@ -654,16 +649,10 @@ func (o *Orchestrator) Deploy(ctx context.Context,resume bool) (err error) {
 		}()
 
 		o.endPhase(phaseExec, phaseErr)
-		// We save state even on error so we don't block subsequent resumes
 		o.saveState("iso_cleanup") 
 	}
-	// Deployment Complete! Update State.
-/* 	o.state.Status = "completed"
-	o.state.CurrentPhase = "done"
-	o.state.EndTime = time.Now().Format(time.RFC3339)
-	_ = o.stateManager.SaveState(o.state) */
 
-	o.logger.Info("\n🎉 ShiftLaunch Agent Execution Complete! OpenShift is ready.")
+	o.logger.Info("\nShiftLaunch Agent Execution Complete! OpenShift is ready.")
 	return nil
 }
 

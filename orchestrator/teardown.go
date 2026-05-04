@@ -16,7 +16,7 @@ import (
 func (o *Orchestrator) Teardown(ctx context.Context) error {
 	// Check if already deleted
 	if o.stateManager.IsDeleted() {
-		o.logger.Info("⚠️ Cluster is already marked as deleted. Skipping teardown.", "cluster", o.cfg.OpenShift.ClusterName)
+		o.logger.Info("Cluster is already marked as deleted. Skipping teardown.", "cluster", o.cfg.OpenShift.ClusterName)
 		return nil
 	}
 
@@ -31,7 +31,7 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 		}
 	}()
 
-	o.logger.Info("🛑 Initiating Soft Teardown", "cluster", o.cfg.OpenShift.ClusterName)
+	o.logger.Info("Initiating Soft Teardown", "cluster", o.cfg.OpenShift.ClusterName)
 
 	// Phase 1: Power off LPARs (MUST happen before unmapping ISO)
 	phaseExec := o.startPhase("teardown_poweroff")
@@ -158,7 +158,7 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 	o.state.EndTime = time.Now().Format(time.RFC3339)
 	_ = o.stateManager.SaveState(o.state)
 
-	o.logger.Info(fmt.Sprintf("✅ Local services stopped. Workspace retained at %s", o.workspaceDir))
+	o.logger.Info(fmt.Sprintf("Local services stopped. Workspace retained at %s", o.workspaceDir))
 	return nil
 }
 

@@ -148,7 +148,7 @@ func loadConfig(requireConfig bool) (*types.AgentConfig, *config.AgentDaemonConf
 	logFilePath := filepath.Join(workspaceDir, "deployment.log")
 	appLogger, err := logger.New(debug, logFilePath)
 	if err != nil {
-		fmt.Printf("⚠️  Warning: Could not setup file logging: %v. Using console only.\n", err)
+		fmt.Printf(" Warning: Could not setup file logging: %v. Using console only.\n", err)
 		appLogger, _ = logger.New(debug, "")
 	}
 

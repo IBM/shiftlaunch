@@ -51,7 +51,7 @@ func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error
 	}
 
 	spinner.Success("Bootstrap Complete!")
-	o.logger.Info("✓ Bootstrap Complete! (Details safely recorded to deployment.log)")
+	o.logger.Info("Bootstrap Complete! (Details safely recorded to deployment.log)")
 	
 	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
 	o.logger.FileOnly().Write([]byte("\n=== BOOTSTRAP OUTPUT ===\n"))
@@ -115,7 +115,7 @@ func (o *Orchestrator) waitForInstallComplete(cancelCtx context.Context) error {
 	}
 
 	spinner.Success("Installation Complete!")
-	o.logger.Info("✓ Installation Complete! (Details safely recorded to deployment.log)")
+	o.logger.Info("Installation Complete! (Details safely recorded to deployment.log)")
 	
 	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
 	o.logger.FileOnly().Write([]byte("\n=== INSTALLER OUTPUT ===\n"))
@@ -165,7 +165,7 @@ func (o *Orchestrator) waitForAgentInstall(cancelCtx context.Context) error {
 	}
 
 	spinner.Success("Agent Installation Complete!")
-	o.logger.Info("✓ Agent Installation Complete! (Details safely recorded to deployment.log)")
+	o.logger.Info("Agent Installation Complete! (Details safely recorded to deployment.log)")
 	
 	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
 	o.logger.FileOnly().Write([]byte("\n=== AGENT INSTALLER OUTPUT ===\n"))

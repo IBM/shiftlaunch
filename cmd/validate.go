@@ -61,7 +61,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("validation failed for cluster %s: %w", cfg.OpenShift.ClusterName, err)
 	}
 
-	log.Info("✓ Cluster configuration is valid", "cluster", cfg.OpenShift.ClusterName)
+	log.Info("Cluster configuration is valid", "cluster", cfg.OpenShift.ClusterName)
 	log.Info("=== All Validations Passed ===")
 
 	return nil

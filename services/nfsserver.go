@@ -70,7 +70,7 @@ func (n *NFSManager) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to apply NFS exports: %w", err)
 	}
 
-	n.logger.Info("✓ NFS server configured and directory exported", "dir", installDir)
+	n.logger.Info("NFS server configured and directory exported", "dir", installDir)
 	return nil
 }
 
@@ -91,6 +91,6 @@ func (n *NFSManager) Cleanup(ctx context.Context) error {
 		return err
 	}
 
-	n.logger.Info("✓ NFS configuration cleaned up")
+	n.logger.Info("NFS configuration cleaned up")
 	return nil
 }

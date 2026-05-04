@@ -73,7 +73,7 @@ func (c *ControllerSetup) InstallPackages(ctx context.Context) error {
 		return fmt.Errorf("failed to install local packages: %w", err)
 	}
 
-	c.logger.Info("✓ Packages installed successfully")
+	c.logger.Info("Packages installed successfully")
 	return nil
 }
 
@@ -138,6 +138,6 @@ func (c *ControllerSetup) ConfigureFirewall(ctx context.Context) error {
 		return fmt.Errorf("failed to reload firewall: %w", err)
 	}
 
-	c.logger.Info("✓ Local firewall configured successfully")
+	c.logger.Info("Local firewall configured successfully")
 	return nil
 }

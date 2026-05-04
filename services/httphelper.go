@@ -34,7 +34,7 @@ check_ignition() {
     for file in bootstrap.ign master.ign worker.ign; do
         if [ -f "${HTTP_DIR}/ignition/${file}" ]; then
             local size=$(du -h "${HTTP_DIR}/ignition/${file}" | awk '{print $1}')
-            echo "  ✓ ${file} (${size})"
+            echo "  ${file} (${size})"
             found=$((found + 1))
         else
             echo "  ✗ ${file} missing"
@@ -50,7 +50,7 @@ check_rhcos() {
     for file in rhcos-live-kernel-ppc64le rhcos-live-initramfs.ppc64le.img rhcos-live-rootfs.ppc64le.img; do
         if [ -f "${HTTP_DIR}/rhcos/${file}" ]; then
             local size=$(du -h "${HTTP_DIR}/rhcos/${file}" | awk '{print $1}')
-            echo "  ✓ ${file} (${size})"
+            echo "  ${file} (${size})"
             found=$((found + 1))
         else
             echo "  ✗ ${file} missing"
@@ -66,7 +66,7 @@ check_tools() {
     for tool in openshift-install oc kubectl; do
         if [ -f "${HTTP_DIR}/tools/${tool}" ]; then
             if [ -x "${HTTP_DIR}/tools/${tool}" ]; then
-                echo "  ✓ ${tool} (executable)"
+                echo "  ${tool} (executable)"
             else
                 echo "  ⚠ ${tool} (not executable)"
             fi
@@ -97,7 +97,7 @@ test_http() {
         local url="${base_url}/${path}"
         
         if curl -s -f -I "${url}" > /dev/null 2>&1; then
-            echo "  ✓ ${desc} accessible"
+            echo "  ${desc} accessible"
             passed=$((passed + 1))
         else
             echo "  ✗ ${desc} not accessible"

@@ -41,7 +41,7 @@ func NewProviderWithState(cfg *types.AgentConfig, log *logger.Logger, debug bool
 		return nil, fmt.Errorf("HMC login failed for user %s at %s: %w. Please verify HMC is accessible and credentials are correct", cfg.HMC.Username, cfg.HMC.IP, err)
 	}
 	
-	log.Info("✓ Successfully authenticated with HMC", "ip", cfg.HMC.IP, "user", cfg.HMC.Username, "session", client.Session()[:8]+"...")
+	log.Info("Successfully authenticated with HMC", "ip", cfg.HMC.IP, "user", cfg.HMC.Username, "session", client.Session()[:8]+"...")
 	
 	return &HMCProvider{
 		cfg:          cfg,

@@ -8,57 +8,83 @@ import (
 )
 
 type Logger struct {
-	charm *log.Logger
-	file  *os.File
-	debug bool // Added this field to fix the "unknown field" error
+	consoleLogger *log.Logger
+	fileLogger    *log.Logger
+	file          *os.File
+	debug         bool
 }
 
-// New sets up the dual-writer logging system
+// New sets up the dual-writer logging system with separate console and file loggers
 func New(debug bool, logPath string) (*Logger, error) {
 	var file *os.File
+	var fileLogger *log.Logger
 	var err error
 
 	// 1. Attempt to open the log file if a path is provided
 	if logPath != "" {
 		file, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		// We don't return nil here; even if the file fails, we want the console logger to work
+		if err == nil && file != nil {
+			// Create file logger (colors will be auto-disabled for file)
+			fileOpts := log.Options{
+				ReportTimestamp: true,
+				Prefix:          "ShiftLaunch",
+			}
+			if debug {
+				fileOpts.Level = log.DebugLevel
+			} else {
+				fileOpts.Level = log.InfoLevel
+			}
+			fileLogger = log.NewWithOptions(file, fileOpts)
+		}
 	}
 
-	// 2. Configure Logger Options
-	opts := log.Options{
+	// 2. Create console logger (colors will be auto-enabled for terminal)
+	consoleOpts := log.Options{
 		ReportTimestamp: true,
 		Prefix:          "ShiftLaunch",
 	}
-
 	if debug {
-		opts.Level = log.DebugLevel
+		consoleOpts.Level = log.DebugLevel
 	} else {
-		opts.Level = log.InfoLevel
+		consoleOpts.Level = log.InfoLevel
 	}
-
-	// 3. Setup MultiWriter
-	// This sends logs to the terminal (stderr) AND the file (if it exists)
-	var writers []io.Writer
-	writers = append(writers, os.Stderr)
-	if file != nil {
-		writers = append(writers, file)
-	}
-	multiWriter := io.MultiWriter(writers...)
-
-	// 4. Initialize the Charm logger with our multi-writer
-	charmLogger := log.NewWithOptions(multiWriter, opts)
+	consoleLogger := log.NewWithOptions(os.Stderr, consoleOpts)
 
 	return &Logger{
-		charm: charmLogger,
-		file:  file,
-		debug: debug,
-	}, err // err will be nil unless the file opening failed
+		consoleLogger: consoleLogger,
+		fileLogger:    fileLogger,
+		file:          file,
+		debug:         debug,
+	}, err
 }
 
-func (l *Logger) Info(msg string, keyvals ...interface{})  { l.charm.Info(msg, keyvals...) }
-func (l *Logger) Debug(msg string, keyvals ...interface{}) { l.charm.Debug(msg, keyvals...) }
-func (l *Logger) Error(msg string, keyvals ...interface{}) { l.charm.Error(msg, keyvals...) }
-func (l *Logger) Warn(msg string, keyvals ...interface{})  { l.charm.Warn(msg, keyvals...) }
+func (l *Logger) Info(msg string, keyvals ...interface{}) {
+	l.consoleLogger.Info(msg, keyvals...)
+	if l.fileLogger != nil {
+		l.fileLogger.Info(msg, keyvals...)
+	}
+}
+
+func (l *Logger) Debug(msg string, keyvals ...interface{}) {
+	l.consoleLogger.Debug(msg, keyvals...)
+	if l.fileLogger != nil {
+		l.fileLogger.Debug(msg, keyvals...)
+	}
+}
+
+func (l *Logger) Error(msg string, keyvals ...interface{}) {
+	l.consoleLogger.Error(msg, keyvals...)
+	if l.fileLogger != nil {
+		l.fileLogger.Error(msg, keyvals...)
+	}
+}
+
+func (l *Logger) Warn(msg string, keyvals ...interface{}) {
+	l.consoleLogger.Warn(msg, keyvals...)
+	if l.fileLogger != nil {
+		l.fileLogger.Warn(msg, keyvals...)
+	}
+}
 
 // Capture safely executes a wrapped function.
 func (l *Logger) Capture(f func()) {

@@ -44,7 +44,7 @@ network:
 # --- 5. OPENSHIFT PAYLOAD ---
 openshift:
   cluster_name: "ocp-multi"
-  version: "4.21"
+  version: "4.22"
   base_domain: "example.local"
   
   cluster_network_cidr: "10.128.0.0/14"
@@ -61,8 +61,10 @@ openshift:
     checksum_url: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/4.18/latest/sha256sum.txt"
         
   ocp_client_config:
-    ocp_client: "https://mirror.openshift.com/pub/openshift-v4/multi/clients/ocp/candidate-4.21/ppc64le/openshift-client-linux.tar.gz"
-    ocp_installer: "https://mirror.openshift.com/pub/openshift-v4/multi/clients/ocp/candidate-4.21/ppc64le/openshift-install-linux.tar.gz"
+    #ocp_client: "https://mirror.openshift.com/pub/openshift-v4/multi/clients/ocp/candidate-4.21/ppc64le/openshift-client-linux.tar.gz"
+    #ocp_installer: "https://mirror.openshift.com/pub/openshift-v4/multi/clients/ocp/candidate-4.21/ppc64le/openshift-install-linux.tar.gz"
+    ocp_client: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.22.0-rc.1/openshift-client-linux.tar.gz"
+    ocp_installer: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.22.0-rc.1/openshift-install-linux.tar.gz"
 
 # --- 6. NODE TARGETS (HMC / BYOI) ---
 nodes:
