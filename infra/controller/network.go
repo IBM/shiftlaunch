@@ -68,13 +68,12 @@ func (nm *NetworkManager) AddVIPAlias(ctx context.Context,iface, ip, cidr string
 	return nil
 }
 
-// RemoveVIPAlias dynamically identifies and prunes all VIP aliases from the interface
-// using the kernel routing table subtraction method to guarantee the primary IP is preserved.
+// RemoveVIPAlias dynamically identifies and removes a specific VIP alias from the interface
+// while leaving all other active cluster VIPs and the primary IP completely intact.
 func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, controllerIP string) error {
 	nm.logger.Info("Starting dynamic VIP cleanup using kernel routing table", "interface", iface)
 
 	// 1. Get the "Base IP" (The True Identity IP chosen by the kernel for outbound routing)
-	// Example command: ip route get 1.1.1.1 | grep -oP 'src \K\S+'
 	baseIPCmd := `ip route get 1.1.1.1 | awk -F"src " 'NR==1{split($2,a," "); print a[1]}'`
 	baseIPOut, err := nm.executor.Execute(ctx, baseIPCmd)
 	if err != nil {
@@ -87,7 +86,6 @@ func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, c
 
 	nm.logger.Debug("Kernel Routing Analysis", "BaseIP", baseIP)
 
-	// --- CRITICAL SAFETY CHECK ---
 	// Prevent the orchestrator from pruning the controller's own primary IP
 	if ip == baseIP {
 		nm.logger.Warn("SAFETY ABORT: The requested VIP matches the kernel's Base IP. Refusing to remove.", "ip", ip)
@@ -95,7 +93,7 @@ func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, c
 	}
 
 	// 2. Discover the NetworkManager connection profile managing this interface
-	getConCmd := fmt.Sprintf("nmcli -t -f GENERAL.CONNECTION device show %s | head -n1 | cut -d: -f2", iface)
+	getConCmd := fmt.Sprintf("nmcli -t -f GENERAL.CONNECTION device show %s 2>/dev/null | grep -v -i 'warning' | head -n1 | cut -d: -f2", iface)
 	conNameOut, _ := nm.executor.Execute(ctx, getConCmd)
 	conName := strings.TrimSpace(conNameOut)
 
@@ -111,7 +109,7 @@ func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, c
 		return fmt.Errorf("failed to retrieve IP addresses for interface %s: %v", iface, err)
 	}
 
-	// 4. The Subtraction Method: Destroy anything that is NOT the Base IP
+	// 4. The Targeted Method: Destroy ONLY the specific cluster VIP requested
 	allIPs := strings.Split(strings.TrimSpace(allIPsOut), "\n")
 	vipsRemoved := 0
 
@@ -125,7 +123,8 @@ func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, c
 		parts := strings.Split(ipWithCidr, "/")
 		currentIP := parts[0]
 
-		if currentIP != baseIP {
+		// STRICT MATCH: Only remove if the IP matches our cluster's specific VIP
+		if currentIP == ip {
 			nm.logger.Info("Targeting VIP for destruction", "vip", currentIP)
 
 			// Remove the VIP from the NetworkManager profile to ensure it doesn't return on reboot
@@ -146,7 +145,7 @@ func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, c
 			_, _ = nm.executor.Execute(ctx, upCmd)
 		}
 	} else {
-		nm.logger.Info("No orphaned VIPs detected on interface. Cleanup complete.")
+		nm.logger.Info("Requested VIP not found on interface. Cleanup complete.")
 	}
 
 	return nil

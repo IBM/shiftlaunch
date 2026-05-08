@@ -239,6 +239,20 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 			o.logger.Info("VIP is available", "vip", o.cfg.Network.LoadBalancerIP)
 		}
 	}
+	// --- RESTORE IN-MEMORY STATE FOR RESUMES ---
+	if resume && len(o.state.DiscoveredNodes) > 0 {
+		o.logger.Info("Restoring discovered node metadata from state file...")
+		for _, discovered := range o.state.DiscoveredNodes {
+			for _, node := range o.cfg.GetAllNodes() {
+				if node.Hostname == discovered.Hostname {
+					node.MACAddress = discovered.MACAddress
+					node.UUID = discovered.UUID
+					node.ProfileUUID = discovered.ProfileUUID
+					node.LocationCode = discovered.LocationCode
+				}
+			}
+		}
+	}
 
 	// --- PHASE 1: DISCOVERY ---
 	if !resume || !contains(o.state.CompletedPhases, "discovery") {

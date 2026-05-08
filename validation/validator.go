@@ -802,9 +802,9 @@ func (v *Validator) validateMediaRepositorySpace() {
 	// 1. Try to fetch the existing repository info
 	repoInfo, err := v.hmcClient.GetMediaRepositoryInfo(context.Background(), systemName, activeViosName, v.debug)
 	
-	// 2. If it fails, the repository is missing. Verify we HAVE the capacity to auto-create it later.
-	if err != nil {
-		v.log.Info(fmt.Sprintf("      Media Repository not found on VIOS '%s'. Verifying auto-creation capacity...", activeViosName))
+	// 2. FIX: If it fails OR SizeMB is 0, the repository is missing. Verify we HAVE the capacity to auto-create it later.
+	if err != nil || repoInfo.SizeMB == 0 {
+		v.log.Info(fmt.Sprintf("      Media Repository not found on VIOS '%s' (or size is 0). Verifying auto-creation capacity...", activeViosName))
 		
 		// Discover a suitable Volume Group
 		vgs, vgErr := v.hmcClient.GetVolumeGroups(context.Background(), activeViosUUID, v.debug)
@@ -847,7 +847,7 @@ func (v *Validator) validateMediaRepositorySpace() {
 		return
 	}
 
-	// 3. If repository already exists, validate its free space
+	// 3. If repository already exists and has a size, validate its free space
 	v.log.Info(fmt.Sprintf("      Repository Size: %d MB | Free: %d MB | Required: %d MB (%d nodes)", 
 		repoInfo.SizeMB, repoInfo.FreeMB, requiredMB, nodeCount))
 
