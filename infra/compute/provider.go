@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	hmc "github.com/sudeeshjohn/powerhmc-go"
 	"github.com/sudeeshjohn/shiftlaunch/infra"
 	"github.com/sudeeshjohn/shiftlaunch/logger"
 	"github.com/sudeeshjohn/shiftlaunch/types"
+	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 )
 
 // ComputeProvider defines operations for pre-provisioned infrastructure [cite: 39]

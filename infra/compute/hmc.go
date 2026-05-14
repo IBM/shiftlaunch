@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	hmc "github.com/sudeeshjohn/powerhmc-go"
 	"github.com/sudeeshjohn/shiftlaunch/logger"
 	"github.com/sudeeshjohn/shiftlaunch/types"
+	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 )
 
 type HMCProvider struct {
@@ -74,13 +74,29 @@ func (h *HMCProvider) DiscoverMetadata(ctx context.Context) error {
 		// Pass false for debug to avoid excessive logging
 		adapters, err := h.hmcClient.GetClientNetworkAdapters(ctx, sysUUID, node.UUID, false)
 		if err != nil || len(adapters) == 0 {
+			errMsg := "unknown error"
+			if err != nil {
+				errMsg = err.Error()
+			}
+			h.logger.Error("No network adapter found on LPAR", "lpar", node.ExistingLPARName, "reason", errMsg)
 			return fmt.Errorf("no network adapter found on LPAR %s", node.ExistingLPARName)
 		}
 
 		node.MACAddress = hmc.FormatMACAddress(adapters[0].MACAddress)
 		node.LocationCode = adapters[0].LocationCode
 
-		h.logger.Info("Discovered", "lpar", node.ExistingLPARName, "mac", node.MACAddress, "uuid", node.UUID)
+		// 5. Validate LPAR has attached storage
+		volumes, err := h.hmcClient.GetAttachedVolumes(ctx, sysUUID, node.UUID, false)
+		if err != nil || len(volumes) == 0 {
+			errMsg := "no volumes found"
+			if err != nil {
+				errMsg = err.Error()
+			}
+			h.logger.Error("No storage/disk found attached to LPAR", "lpar", node.ExistingLPARName, "reason", errMsg)
+			return fmt.Errorf("no storage/disk found attached to LPAR %s. Please attach at least one disk before deployment", node.ExistingLPARName)
+		}
+
+		h.logger.Info("Discovered", "lpar", node.ExistingLPARName, "mac", node.MACAddress, "uuid", node.UUID, "disks", len(volumes))
 
 		// Save discovered node to state file
 		if h.stateManager != nil {
@@ -346,7 +362,9 @@ func (h *HMCProvider) PowerOffNodes(ctx context.Context) error {
 		// If the LPAR is already off, the HMC returns an error which we catch and log as debug.
 		_, err := h.hmcClient.PowerOffPartition(ctx, node.UUID, "Immediate", false, true)
 		if err != nil {
-			h.logger.Warn("LPAR power off returned an error (may already be off)", "lpar", node.ExistingLPARName, "error", err)
+			// Extract just the first line of the error for cleaner logging
+			errMsg := strings.Split(err.Error(), "\n")[0]
+			h.logger.Warn("LPAR power off returned an error (may already be off)", "lpar", node.ExistingLPARName, "details", errMsg)
 		} else {
 			h.logger.Info("Power off signal accepted", "lpar", node.ExistingLPARName)
 			powerOffCount++

@@ -4,8 +4,8 @@ import (
 	"io"
 
 	"github.com/charmbracelet/log"
-	hmc "github.com/sudeeshjohn/powerhmc-go"
 	"github.com/sudeeshjohn/shiftlaunch/logger"
+	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 )
 
 // NewHMCLoggerAdapter creates an HMC logger that integrates with shiftlaunch's logging system.

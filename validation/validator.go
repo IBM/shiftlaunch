@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	hmc "github.com/sudeeshjohn/powerhmc-go"
 	"github.com/sudeeshjohn/shiftlaunch/localexec"
 	"github.com/sudeeshjohn/shiftlaunch/logger"
 	"github.com/sudeeshjohn/shiftlaunch/types"
+	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 	"go.yaml.in/yaml/v3"
 )
 

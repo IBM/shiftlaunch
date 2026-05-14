@@ -34,6 +34,9 @@ func runDumpConfig(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	
+	// Ensure logger file descriptor is closed when command completes
+	defer orch.GetLogger().Close()
 
 	return dumpConfig(orch, cfg)
 }

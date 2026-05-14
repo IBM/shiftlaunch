@@ -17,6 +17,7 @@ var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Execute cluster deployment pipeline",
 	SilenceUsage: true,
+	SilenceErrors: true,
 	Long: `Execute the cluster deployment pipeline. Automatically resumes if a partial
 deployment is detected.
 
@@ -37,6 +38,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	
+	// Ensure logger file descriptor is closed when command completes
+	defer orch.GetLogger().Close()
 
 	ctx := GetContext()
 	log := orch.GetLogger()

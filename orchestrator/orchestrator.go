@@ -207,7 +207,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 	// --- PHASE 0: VALIDATION (Only for fresh deployments) ---
 	if !resume || len(o.state.CompletedPhases) == 0 {
-		o.logger.Info("\n[Phase 0] Pre-Deployment Validation")
+		o.logger.Phase("[Phase 0] Pre-Deployment Validation")
 		
 		// Validate VIP is not in use
 		if o.cfg.ManagedServices.LoadBalancer && o.cfg.Network.LoadBalancerIP != "" {
@@ -221,9 +221,15 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 					// VIP is configured - check which cluster is using it
 					conflictingCluster := o.findClusterUsingVIP(o.cfg.Network.LoadBalancerIP)
 					if conflictingCluster != "" {
+						o.logger.Error("VIP is already in use by another cluster",
+							"vip", o.cfg.Network.LoadBalancerIP,
+							"cluster", conflictingCluster)
 						return fmt.Errorf("VIP %s is already in use by cluster '%s'. Please choose a different loadbalancer_ip or delete the conflicting cluster first",
 							o.cfg.Network.LoadBalancerIP, conflictingCluster)
 					}
+					o.logger.Error("VIP is already configured on interface",
+						"vip", o.cfg.Network.LoadBalancerIP,
+						"interface", iface)
 					return fmt.Errorf("VIP %s is already configured on interface %s. Please remove the VIP alias manually or choose a different loadbalancer_ip",
 						o.cfg.Network.LoadBalancerIP, iface)
 				}
@@ -232,6 +238,9 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 			// Check if VIP is defined in another cluster's config
 			conflictingCluster := o.findClusterUsingVIP(o.cfg.Network.LoadBalancerIP)
 			if conflictingCluster != "" {
+				o.logger.Error("VIP is already configured for another cluster",
+					"vip", o.cfg.Network.LoadBalancerIP,
+					"cluster", conflictingCluster)
 				return fmt.Errorf("VIP %s is already configured for cluster '%s'. Please choose a different loadbalancer_ip",
 					o.cfg.Network.LoadBalancerIP, conflictingCluster)
 			}
@@ -257,7 +266,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// --- PHASE 1: DISCOVERY ---
 	if !resume || !contains(o.state.CompletedPhases, "discovery") {
 		phaseExec := o.startPhase("discovery")
-		o.logger.Info("\n[Phase 1] Pre-Flight & HMC Discovery")
+		o.logger.Phase("[Phase 1] Pre-Flight & HMC Discovery")
 		
 		var phaseErr error
 		func() {
@@ -273,6 +282,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 			}()
 			
 			if err := provider.DiscoverMetadata(ctx); err != nil {
+				o.logger.Error("Failed to discover LPAR metadata from HMC", "error", err)
 				phaseErr = fmt.Errorf("failed to discover LPAR metadata from HMC: %w", err)
 				return
 			}
@@ -299,7 +309,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 	if needsDownloads {
 		phaseExec := o.startPhase("downloads")
-		o.logger.Info("\n[Phase 2] Downloading OpenShift Artifacts")
+		o.logger.Phase("[Phase 2] Downloading OpenShift Artifacts")
 		
 		downloader := services.NewDownloader(o.cfg, o.daemonCfg, o.executor, o.logger)
 		phaseErr := downloader.DownloadAll(ctx, o.workspaceDir)
@@ -314,7 +324,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// --- PHASE 3: MANAGED SERVICES ---
 	if !resume || !contains(o.state.CompletedPhases, "services") {
 		phaseExec := o.startPhase("services")
-		o.logger.Info("\n[Phase 3] Configuring Managed Infrastructure Services")
+		o.logger.Phase("[Phase 3] Configuring Managed Infrastructure Services")
 
 		var phaseErr error
 		func() {
@@ -343,7 +353,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				haproxySvc.ServiceName = "haproxy"
 				haproxySvc.ConfigFile = "/etc/haproxy/haproxy.cfg"
 				
-				o.logger.Info(" -> Configuring Local HAProxy...")
+				o.logger.Info("Configuring Local HAProxy...")
 
 				o.executor.Execute(ctx, "sudo sysctl -w net.ipv4.ip_nonlocal_bind=1")
 				o.executor.Execute(ctx, "sudo setsebool -P haproxy_connect_any 1")
@@ -370,7 +380,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				}
 				o.trackServiceEnd(haproxySvc, nil, fmt.Sprintf("Load balancer configured on %s", vip))
 			} else {
-				o.logger.Info(" -> Skipping HAProxy (User Managed)")
+				o.logger.Info("Skipping HAProxy (User Managed)")
 				skipSvc := o.trackServiceStart("haproxy", "load-balancer", false)
 				o.trackServiceEnd(skipSvc, nil, "User managed")
 			}
@@ -382,7 +392,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				dnsSvc.ServiceName = "dnsmasq"
 				dnsSvc.ConfigFile = "/etc/dnsmasq.d/dns.conf"
 				
-				o.logger.Info(" -> Configuring Local DNS...")
+				o.logger.Info("Configuring Local DNS...")
 				if err := dnsmasq.SetupDNS(ctx); err != nil {
 					o.trackServiceEnd(dnsSvc, err, "")
 					phaseErr = err
@@ -390,7 +400,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				}
 				o.trackServiceEnd(dnsSvc, nil, fmt.Sprintf("DNS configured for %s.%s", o.cfg.OpenShift.ClusterName, o.cfg.OpenShift.BaseDomain))
 			} else {
-				o.logger.Info(" -> Skipping DNS (User Managed)")
+				o.logger.Info("Skipping DNS (User Managed)")
 				skipSvc := o.trackServiceStart("dns", "dns", false)
 				o.trackServiceEnd(skipSvc, nil, "User managed")
 			}
@@ -400,7 +410,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				dhcpSvc.ServiceName = "dnsmasq"
 				dhcpSvc.ConfigFile = "/etc/dnsmasq.d/dhcp.conf"
 				
-				o.logger.Info(" -> Configuring Local DHCP...")
+				o.logger.Info("Configuring Local DHCP...")
 				if err := dnsmasq.SetupDHCP(ctx); err != nil {
 					o.trackServiceEnd(dhcpSvc, err, "")
 					phaseErr = err
@@ -408,7 +418,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				}
 				o.trackServiceEnd(dhcpSvc, nil, "DHCP configured for cluster nodes")
 			} else {
-				o.logger.Info(" -> Skipping DHCP (Not required for Agent ISO or User Managed)")
+				o.logger.Info("Skipping DHCP (Not required for Agent ISO or User Managed)")
 				skipSvc := o.trackServiceStart("dhcp", "dhcp", false)
 				skipReason := "Not required for Agent ISO"
 				if !o.cfg.ManagedServices.DHCP {
@@ -422,13 +432,13 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				pxeSvc.ServiceName = "dnsmasq"
 				pxeSvc.ConfigFile = "/etc/dnsmasq.d/tftp.conf"
 				
-				o.logger.Info(" -> Configuring Local PXE Service...")
+				o.logger.Info("Configuring Local PXE Service...")
 				if err := dnsmasq.SetupPXEService(ctx); err != nil {
 					o.trackServiceEnd(pxeSvc, err, "")
 					phaseErr = err
 					return
 				}
-				o.logger.Info(" -> Staging PXE Artifacts...")
+				o.logger.Info("Staging PXE Artifacts...")
 				if err := dnsmasq.ConfigurePXEBoot(ctx, o.workspaceDir); err != nil {
 					o.trackServiceEnd(pxeSvc, err, "")
 					phaseErr = err
@@ -436,7 +446,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				}
 				o.trackServiceEnd(pxeSvc, nil, "PXE boot configured with TFTP")
 			} else {
-				o.logger.Info(" -> Skipping PXE (Not required for Agent ISO or User Managed)")
+				o.logger.Info("Skipping PXE (Not required for Agent ISO or User Managed)")
 				skipSvc := o.trackServiceStart("pxe", "pxe", false)
 				skipReason := "Not required for Agent ISO"
 				if !o.cfg.ManagedServices.PXE {
@@ -452,7 +462,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				restartSvc := o.trackServiceStart("dnsmasq-restart", "service-restart", true)
 				restartSvc.ServiceName = "dnsmasq"
 				
-				o.logger.Info(" -> Restarting DNSmasq service...")
+				o.logger.Info("Restarting DNSmasq service...")
 				if err := dnsmasq.Restart(ctx); err != nil {
 					o.trackServiceEnd(restartSvc, err, "")
 					phaseErr = fmt.Errorf("failed to start dnsmasq: %w", err)
@@ -481,7 +491,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 	if needsIgnition {
 		phaseExec := o.startPhase("ignition")
-		o.logger.Info("\n[Phase 4] Generating OpenShift Ignition Payload")
+		o.logger.Phase("[Phase 4] Generating OpenShift Ignition Payload")
 		
 		var phaseErr error
 		func() {
@@ -498,7 +508,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				httpSvc.ServiceName = "httpd"
 				httpSvc.ConfigFile = "/etc/httpd/conf.d/shiftlaunch.conf"
 				
-				o.logger.Info(" -> Setting up Local HTTP Server (Port 8080)...")
+				o.logger.Info("Setting up Local HTTP Server (Port 8080)...")
 				
 				if err := services.ConfigureHTTPD(ctx, o.executor, o.daemonCfg.Network.HTTPPort); err != nil {
 					o.trackServiceEnd(httpSvc, err, "")
@@ -513,7 +523,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 					return
 				}
 				
-				o.logger.Info(" -> Staging files to HTTP Server...")
+				o.logger.Info("Staging files to HTTP Server...")
 				if err := httpServer.StageFiles(ctx, o.workspaceDir); err != nil {
 					o.trackServiceEnd(httpSvc, err, "")
 					phaseErr = err
@@ -521,7 +531,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				}
 				o.trackServiceEnd(httpSvc, nil, fmt.Sprintf("HTTP server configured on port %d", o.daemonCfg.Network.HTTPPort))
 			} else {
-				o.logger.Info(" -> Skipping HTTP Server setup (Not required for Agent ISO)")
+				o.logger.Info("Skipping HTTP Server setup (Not required for Agent ISO)")
 				skipSvc := o.trackServiceStart("http-server", "http", false)
 				o.trackServiceEnd(skipSvc, nil, "Not required for Agent ISO")
 				
@@ -530,7 +540,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 					nfsSvc.ServiceName = "nfs-server"
 					nfsSvc.ConfigFile = "/etc/exports"
 					
-					o.logger.Info(" -> Setting up NFS Server for Agent ISO...")
+					o.logger.Info("Setting up NFS Server for Agent ISO...")
 					nfsMgr := services.NewNFSManager(o.cfg, o.executor, o.logger, o.workspaceDir)
 					if err := nfsMgr.Setup(ctx); err != nil {
 						o.trackServiceEnd(nfsSvc, err, "")
@@ -540,7 +550,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 					exportPath := filepath.Join(o.workspaceDir, fmt.Sprintf("%s-iso", o.cfg.OpenShift.ClusterName))
 					o.trackServiceEnd(nfsSvc, nil, fmt.Sprintf("NFS export configured: %s", exportPath))
 				} else {
-					o.logger.Info(" -> Skipping NFS Server setup (User Managed)")
+					o.logger.Info("Skipping NFS Server setup (User Managed)")
 					skipSvc := o.trackServiceStart("nfs-server", "nfs", false)
 					o.trackServiceEnd(skipSvc, nil, "User managed")
 				}
@@ -557,7 +567,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// --- PHASE 5: BOOT ---
 	if !resume || !contains(o.state.CompletedPhases, "boot") {
 		phaseExec := o.startPhase("boot")
-		o.logger.Info("\n[Phase 5] Initiating Cluster Boot")
+		o.logger.Phase("[Phase 5] Initiating Cluster Boot")
 		
 		var phaseErr error
 		func() {
@@ -607,7 +617,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// --- PHASE 6: WAIT FOR INSTALLATION ---
 	if !resume || !contains(o.state.CompletedPhases, "wait") {
 		phaseExec := o.startPhase("wait")
-		o.logger.Info("\n[Phase 6] Waiting for OpenShift Installation")
+		o.logger.Phase("[Phase 6] Waiting for OpenShift Installation")
 		
 		var phaseErr error
 		func() {
@@ -632,7 +642,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// --- PHASE 7: POST-INSTALL CLEANUP ---
 	if o.cfg.Nodes.BootMethod == "iso" && (!resume || !contains(o.state.CompletedPhases, "iso_cleanup")) {
 		phaseExec := o.startPhase("iso_cleanup")
-		o.logger.Info("[Phase 7] Cleaning up VIOS ISO Mappings")
+		o.logger.Phase("[Phase 7] Cleaning up VIOS ISO Mappings")
 		
 		var phaseErr error
 		func() {
