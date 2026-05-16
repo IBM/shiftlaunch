@@ -14,6 +14,7 @@ type Logger struct {
 	fileLogger    *log.Logger
 	file          *os.File
 	debug         bool
+	activeSpinner *pterm.SpinnerPrinter
 }
 
 // New sets up the dual-writer logging system with separate console and file loggers
@@ -61,13 +62,26 @@ func New(debug bool, logPath string) (*Logger, error) {
 }
 
 func (l *Logger) Info(msg string, keyvals ...interface{}) {
-	// For the file: Keep the raw structured data
 	if l.fileLogger != nil {
 		l.fileLogger.Info(msg, keyvals...)
 	}
 
-	// For the console: Use our centralized formatter
-	l.consoleLogger.Info(formatKV(msg, keyvals...))
+	formattedMsg := formatKV(msg, keyvals...)
+
+	// INTERCEPT: If a spinner is active, update its text instead of printing a new line!
+	if l.activeSpinner != nil && !l.debug {
+		// Truncate strings that are too long so they don't wrap and break the terminal
+		if len(formattedMsg) > 85 {
+			formattedMsg = formattedMsg[:82] + "..."
+		}
+		
+		// Pad with spaces to exactly 85 characters.
+		// This overwrites ghost characters and aligns the pterm timer on the right!
+		paddedMsg := fmt.Sprintf("%-85s", formattedMsg)
+		l.activeSpinner.UpdateText(paddedMsg)
+	} else {
+		l.consoleLogger.Info(formattedMsg)
+	}
 }
 
 func (l *Logger) Debug(msg string, keyvals ...interface{}) {
@@ -78,16 +92,39 @@ func (l *Logger) Debug(msg string, keyvals ...interface{}) {
 }
 
 func (l *Logger) Error(msg string, keyvals ...interface{}) {
-	l.consoleLogger.Error(msg, keyvals...)
 	if l.fileLogger != nil {
 		l.fileLogger.Error(msg, keyvals...)
+	}
+	formatted := formatKV(msg, keyvals...)
+	
+	if l.activeSpinner != nil && !l.debug {
+		// Apply same padding for consistency
+		if len(formatted) > 85 {
+			formatted = formatted[:82] + "..."
+		}
+		paddedMsg := fmt.Sprintf("%-85s", formatted)
+		pterm.Error.Println(paddedMsg)
+	} else {
+		l.consoleLogger.Error(formatted)
 	}
 }
 
 func (l *Logger) Warn(msg string, keyvals ...interface{}) {
-	l.consoleLogger.Warn(msg, keyvals...)
 	if l.fileLogger != nil {
 		l.fileLogger.Warn(msg, keyvals...)
+	}
+	formatted := formatKV(msg, keyvals...)
+	
+	// pterm handles printing warnings safely above an active spinner
+	if l.activeSpinner != nil && !l.debug {
+		// Apply same padding for consistency
+		if len(formatted) > 85 {
+			formatted = formatted[:82] + "..."
+		}
+		paddedMsg := fmt.Sprintf("%-85s", formatted)
+		pterm.Warning.Println(paddedMsg)
+	} else {
+		l.consoleLogger.Warn(formatted)
 	}
 }
 
@@ -109,7 +146,38 @@ func (l *Logger) FileOnly() io.Writer {
 	return io.Discard
 }
 
+// StartPhase begins a spinner. If in debug mode, it falls back to a standard header.
+func (l *Logger) StartPhase(msg string) {
+	if l.fileLogger != nil {
+		l.fileLogger.Info("=== " + msg + " ===")
+	}
+
+	if l.debug {
+		//pterm.Println()
+		pterm.NewStyle(pterm.FgCyan, pterm.Bold).Println(msg)
+		return
+	}
+
+	//pterm.Println()
+	spinner, _ := pterm.DefaultSpinner.WithText(pterm.Cyan(msg)).Start()
+	l.activeSpinner = spinner
+}
+
+// EndPhase cleanly stops the spinner and marks it with a check or cross
+func (l *Logger) EndPhase(success bool, msg string) {
+	if l.activeSpinner == nil {
+		return
+	}
+	if success {
+		l.activeSpinner.Success(pterm.Cyan(msg))
+	} else {
+		l.activeSpinner.Fail(pterm.Red(msg))
+	}
+	l.activeSpinner = nil
+}
+
 // Phase prints a highly visible header to the console, while keeping the file log clean
+// DEPRECATED: Use StartPhase/EndPhase for spinner-based phases
 func (l *Logger) Phase(msg string, keyvals ...interface{}) {
 	// Write standard plain text to the deployment.log file
 	if l.fileLogger != nil {

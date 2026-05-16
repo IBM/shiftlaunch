@@ -181,7 +181,8 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 	// Acquire lock to prevent concurrent deployments
 	if err := o.stateManager.AcquireLock(); err != nil {
-		return fmt.Errorf("failed to acquire cluster lock: %w", err)
+		o.logger.Error("Failed to start deployment", "error", err)
+		return err
 	}
 
 	// Ensure lock is released and correct state markers are applied, even on panic/error
@@ -204,11 +205,11 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 		}
 	}()
 
-	o.logger.Info("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
+	o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
 
 	// --- PHASE 0: VALIDATION (Only for fresh deployments) ---
 	if !resume || len(o.state.CompletedPhases) == 0 {
-		o.logger.Phase("[Phase 0/7] Pre-Deployment Validation")
+		o.logger.StartPhase("[Phase 0/7] Pre-Deployment Validation")
 		
 		// Validate VIP is not in use
 		if o.cfg.ManagedServices.LoadBalancer && o.cfg.Network.LoadBalancerIP != "" {
@@ -248,10 +249,12 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 			
 			o.logger.Info("VIP is available", "vip", o.cfg.Network.LoadBalancerIP)
 		}
+		
+		o.logger.EndPhase(true, "[Phase 0/7] Pre-Deployment Validation Complete")
 	}
 	// --- RESTORE IN-MEMORY STATE FOR RESUMES ---
 	if resume && len(o.state.DiscoveredNodes) > 0 {
-		o.logger.Info("Restoring discovered node metadata from state file...")
+		o.logger.Debug("Restoring discovered node metadata from state file...")
 		for _, discovered := range o.state.DiscoveredNodes {
 			for _, node := range o.cfg.GetAllNodes() {
 				if node.Hostname == discovered.Hostname {
@@ -267,7 +270,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	// --- PHASE 1: DISCOVERY ---
 	if !resume || !contains(o.state.CompletedPhases, "discovery") {
 		phaseExec := o.startPhase("discovery")
-		o.logger.Phase("[Phase 1/7] Pre-Flight & HMC Discovery")
+		o.logger.StartPhase("[Phase 1/7] Pre-Flight & HMC Discovery")
 		
 		var phaseErr error
 		func() {
@@ -291,8 +294,11 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 		
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 1/7] Pre-Flight & HMC Discovery Failed")
 			return phaseErr
 		}
+		
+		o.logger.EndPhase(true, "[Phase 1/7] Pre-Flight & HMC Discovery Complete")
 		o.saveState("discovery")
 	}
 
@@ -310,22 +316,25 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 	if needsDownloads {
 		phaseExec := o.startPhase("downloads")
-		o.logger.Phase("[Phase 2/7] Downloading OpenShift Artifacts")
+		o.logger.StartPhase("[Phase 2/7] Downloading OpenShift Artifacts")
 		
 		downloader := services.NewDownloader(o.cfg, o.daemonCfg, o.executor, o.logger)
 		phaseErr := downloader.DownloadAll(ctx, o.workspaceDir)
 		
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 2/7] Downloading OpenShift Artifacts Failed")
 			return phaseErr
 		}
+		
+		o.logger.EndPhase(true, "[Phase 2/7] Downloading OpenShift Artifacts Complete")
 		o.saveState("downloads")
 	}
 
 	// --- PHASE 3: MANAGED SERVICES ---
 	if !resume || !contains(o.state.CompletedPhases, "services") {
 		phaseExec := o.startPhase("services")
-		o.logger.Phase("[Phase 3/7] Configuring Managed Infrastructure Services")
+		o.logger.StartPhase("[Phase 3/7] Configuring Managed Infrastructure Services")
 
 		var phaseErr error
 		func() {
@@ -492,8 +501,11 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 3/7] Configuring Managed Infrastructure Services Failed")
 			return phaseErr
 		}
+		
+		o.logger.EndPhase(true, "[Phase 3/7] Configuring Managed Infrastructure Services Complete")
 		o.saveState("services")
 	}
 
@@ -509,7 +521,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 	if needsIgnition {
 		phaseExec := o.startPhase("ignition")
-		o.logger.Phase("[Phase 4/7] Generating OpenShift Ignition Payload")
+		o.logger.StartPhase("[Phase 4/7] Generating OpenShift Ignition Payload")
 		
 		var phaseErr error
 		func() {
@@ -577,15 +589,18 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 4/7] Generating OpenShift Ignition Payload Failed")
 			return phaseErr
 		}
+		
+		o.logger.EndPhase(true, "[Phase 4/7] Generating OpenShift Ignition Payload Complete")
 		o.saveState("ignition")
 	}
 
 	// --- PHASE 5: BOOT ---
 	if !resume || !contains(o.state.CompletedPhases, "boot") {
 		phaseExec := o.startPhase("boot")
-		o.logger.Phase("[Phase 5/7] Initiating Cluster Boot")
+		o.logger.StartPhase("[Phase 5/7] Initiating Cluster Boot")
 		
 		var phaseErr error
 		func() {
@@ -627,15 +642,18 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 		
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 5/7] Initiating Cluster Boot Failed")
 			return phaseErr
 		}
+		
+		o.logger.EndPhase(true, "[Phase 5/7] Initiating Cluster Boot Complete")
 		o.saveState("boot")
 	}
 
 	// --- PHASE 6: WAIT FOR INSTALLATION ---
 	if !resume || !contains(o.state.CompletedPhases, "wait") {
 		phaseExec := o.startPhase("wait")
-		o.logger.Phase("[Phase 6/7] Waiting for OpenShift Installation")
+		o.logger.StartPhase("[Phase 6/7] Waiting for OpenShift Installation")
 		
 		var phaseErr error
 		func() {
@@ -652,15 +670,18 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 
 		o.endPhase(phaseExec, phaseErr)
 		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 6/7] Waiting for OpenShift Installation Failed")
 			return phaseErr
 		}
+		
+		o.logger.EndPhase(true, "[Phase 6/7] Waiting for OpenShift Installation Complete")
 		o.saveState("wait")
 	}
 
 	// --- PHASE 7: POST-INSTALL CLEANUP ---
 	if o.cfg.Nodes.BootMethod == "iso" && (!resume || !contains(o.state.CompletedPhases, "iso_cleanup")) {
 		phaseExec := o.startPhase("iso_cleanup")
-		o.logger.Phase("[Phase 7/7] Cleaning up VIOS ISO Mappings")
+		o.logger.StartPhase("[Phase 7/7] Cleaning up VIOS ISO Mappings")
 		
 		var phaseErr error
 		func() {
@@ -691,10 +712,15 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 		}()
 
 		o.endPhase(phaseExec, phaseErr)
-		o.saveState("iso_cleanup") 
+		if phaseErr != nil {
+			o.logger.EndPhase(false, "[Phase 7/7] Cleaning up VIOS ISO Mappings Failed")
+		} else {
+			o.logger.EndPhase(true, "[Phase 7/7] Cleaning up VIOS ISO Mappings Complete")
+		}
+		o.saveState("iso_cleanup")
 	}
 
-	o.logger.Info("\nShiftLaunch Agent Execution Complete! OpenShift is ready.")
+	o.logger.Debug("ShiftLaunch Agent Execution Complete! OpenShift is ready.")
 	return nil
 }
 

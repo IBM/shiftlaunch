@@ -92,7 +92,7 @@ func ensureClusterAvailableForNewDeployment(clusterName string) error {
 	}
 
 	if clusterLockExists(clusterName) {
-		return fmt.Errorf("cluster '%s' already exists locally and is locked. Use -resume or delete the cluster directory manually", clusterName)
+		return fmt.Errorf("Cluster '%s' is locked by a crashed process.\nTo unblock deployment, run: rm -f %s/%s/.lock", clusterName, clustersDir, clusterName)
 	}
 
 	return fmt.Errorf("cluster '%s' directory already exists locally. Refusing to overwrite", clusterName)

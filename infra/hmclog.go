@@ -1,39 +1,45 @@
 package infra
 
 import (
-	"io"
+	"strings"
 
 	"github.com/charmbracelet/log"
 	"github.com/sudeeshjohn/shiftlaunch/logger"
 	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 )
 
-// NewHMCLoggerAdapter creates an HMC logger that integrates with shiftlaunch's logging system.
-// It writes all HMC API logs to the deployment log file and optionally to the terminal based on debug flag.
+// logWriter acts as a bridge between the standard io.Writer and our custom logger
+type logWriter struct {
+	logger *logger.Logger
+}
+
+func (lw *logWriter) Write(p []byte) (n int, err error) {
+	msg := strings.TrimSpace(string(p))
+	if msg != "" {
+		// Route through Debug so it respects the spinner UI and file outputs
+		lw.logger.Debug("[HMC API] " + msg)
+	}
+	return len(p), nil
+}
+
+// NewHMCLoggerAdapter creates an HMC logger that integrates safely with the spinner UI
 func NewHMCLoggerAdapter(shiftlaunchLogger *logger.Logger, debug bool) *hmc.Logger {
-	var terminalOutput io.Writer
 	var level log.Level
 
 	if debug {
-		// In debug mode: write to file AND show in terminal
-		terminalOutput = shiftlaunchLogger.TerminalOnly()
 		level = log.DebugLevel
 	} else {
-		// In normal mode: write to file only, suppress terminal output completely
-		terminalOutput = io.Discard
-		level = log.DebugLevel // Set to DebugLevel so API calls are logged to file
+		// Suppress completely if not in debug mode
+		level = log.ErrorLevel
 	}
 
-	// Always write to file, optionally write to terminal
-	output := io.MultiWriter(shiftlaunchLogger.FileOnly(), terminalOutput)
+	// Route all HMC SDK traffic securely through our custom logging engine
+	safeOutput := &logWriter{logger: shiftlaunchLogger}
 
-	// Reinitialize the global hmcLogger used by utility functions
-	// This ensures payload creation logs also go to the right destination
-	hmc.ReinitLogger(output)
+	hmc.ReinitLogger(safeOutput)
 
-	// Create HMC logger with the appropriate output destination
-	hmcLogger := hmc.NewLogger(level, output)
-	hmcLogger.SetPrefix("[HMC]")
+	hmcLogger := hmc.NewLogger(level, safeOutput)
+	hmcLogger.SetPrefix("") // Prefix handled by the logWriter
 
 	return hmcLogger
 }

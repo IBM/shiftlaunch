@@ -33,40 +33,33 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	
-	// Ensure logger file descriptor is closed when command completes
 	defer orch.GetLogger().Close()
 
 	ctx := GetContext()
 	log := orch.GetLogger()
 
-	log.Info("=== Validating Configuration ===")
-	log.Info("Validating cluster", "cluster", cfg.OpenShift.ClusterName)
-
-	// Initialize local executor for environment validation
+	// Initialize local executor
 	exec := localexec.NewLocalClient(log)
-
-	// Create validator
 	validator := validation.NewValidator(cfg, exec, debug)
 	validator.SetLogger(log)
 
-	// Set up HMC client for Phase 3 validation (LPAR existence checks)
+	// Set up HMC client
 	provider, err := compute.NewProvider(cfg, log, debug)
 	if err != nil {
-		log.Warn("Could not connect to HMC for validation. Skipping Phase 3 (LPAR validation).", "error", err)
+		log.Warn("Could not connect to HMC for validation. Skipping HMC infrastructure checks.", "error", err)
 	} else {
-		// Extract the HMC client from the provider
 		if hmcProvider, ok := provider.(*compute.HMCProvider); ok {
 			validator.SetHMCClient(hmcProvider.GetHMCClient())
 		}
 	}
 
+	// The validator handles all its own Phase UI and error printing now
 	if err := validator.Validate(ctx); err != nil {
-		return fmt.Errorf("validation failed for cluster %s: %w", cfg.OpenShift.ClusterName, err)
+		return fmt.Errorf("validation failed for cluster %s", cfg.OpenShift.ClusterName)
 	}
 
-	log.Info("Cluster configuration is valid", "cluster", cfg.OpenShift.ClusterName)
-	log.Info("=== All Validations Passed ===")
+	// Just a single, clean success message at the end
+	log.Info("✅ All validations passed successfully!")
 
 	return nil
 }

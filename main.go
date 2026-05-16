@@ -1,15 +1,20 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/sudeeshjohn/shiftlaunch/cmd"
 )
 
 func main() {
 	if err := cmd.Execute(); err != nil {
-		// Error is already logged via logger.Error() in the code
-		// This ensures we exit with error code without duplicate terminal output
+		// If the error is a Cobra syntax/flag error, it bypassed our custom logger. We must print it!
+		if strings.Contains(err.Error(), "unknown flag") || strings.Contains(err.Error(), "invalid argument") || strings.Contains(err.Error(), "unknown command") {
+			fmt.Fprintf(os.Stderr, "❌ CLI Error: %v\nRun 'shiftlaunch --help' for usage.\n", err)
+		}
+		// Exit with error code
 		os.Exit(1)
 	}
 }

@@ -22,7 +22,8 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 
 	// Acquire lock to prevent concurrent operations
 	if err := o.stateManager.AcquireLock(); err != nil {
-		return fmt.Errorf("failed to acquire cluster lock: %w", err)
+		o.logger.Error("Failed to start teardown", "error", err)
+		return err
 	}
 	// Ensure lock is always released, even on error
 	defer func() {

@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/pterm/pterm"
 )
 
 // WaitForBootstrap waits for the OpenShift bootstrap process to complete
@@ -22,12 +20,9 @@ func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error
 
 	timeoutSecs := 1800 // Default 30 minutes
 
+	// Just use Info! The Logger will intercept this and update the active Phase 6 spinner
 	spinnerText := fmt.Sprintf("Waiting for bootstrap to complete (%d min timeout, may take 20-30 minutes)...", timeoutSecs/60)
-	spinner, _ := pterm.DefaultSpinner.WithWriter(o.logger.TerminalOnly()).Start(spinnerText)
-	defer spinner.Stop()
-
-	o.logger.Info(fmt.Sprintf("Timeout: %d seconds (%d minutes)", timeoutSecs, timeoutSecs/60))
-	o.logger.Info("Executing: openshift-install wait-for bootstrap-complete")
+	o.logger.Info(spinnerText)
 
 	timeoutCtx, cancel := context.WithTimeout(cancelCtx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
@@ -45,22 +40,23 @@ func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error
 	output := outBuf.Bytes()
 
 	if cmdErr != nil {
-		spinner.Fail("Bootstrap failed!")
 		o.logger.Error(fmt.Sprintf("\n❌ Bootstrap failed:\n%s\n", string(output)))
 		return fmt.Errorf("bootstrap completion failed: %w", cmdErr)
 	}
 
-	spinner.Success("Bootstrap Complete!")
 	o.logger.Info("Bootstrap Complete! (Details safely recorded to deployment.log)")
 	
-	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
+	// Write massive output ONLY to the log file, bypassing the terminal
 	o.logger.FileOnly().Write([]byte("\n=== BOOTSTRAP OUTPUT ===\n"))
 	o.logger.FileOnly().Write(output)
 	o.logger.FileOnly().Write([]byte("\n========================\n"))
 
 	if !o.cfg.IsSNO() {
-		pterm.Info.WithWriter(o.logger.TerminalOnly()).Println("Bootstrap node can now be powered off. The cluster will continue installation without it.")
+		o.logger.Info("Bootstrap node can now be powered off manually.")
 	}
+
+	// ADD A DELAY: Let the user read the "Bootstrap Complete!" message on the spinner before we overwrite it with the Install wait!
+	time.Sleep(4 * time.Second)
 
 	return nil
 }
@@ -82,11 +78,7 @@ func (o *Orchestrator) waitForInstallComplete(cancelCtx context.Context) error {
 	}
 
 	spinnerText := fmt.Sprintf("Waiting for OpenShift installation to complete (%d min timeout, may take %s)...", timeoutSecs/60, timeEstimate)
-	spinner, _ := pterm.DefaultSpinner.WithWriter(o.logger.TerminalOnly()).Start(spinnerText)
-	defer spinner.Stop()
-
-	o.logger.Info(fmt.Sprintf("Timeout: %d seconds (%d minutes)", timeoutSecs, timeoutSecs/60))
-	o.logger.Info("Executing: openshift-install wait-for install-complete")
+	o.logger.Info(spinnerText)
 
 	timeoutCtx, cancel := context.WithTimeout(cancelCtx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
@@ -109,15 +101,13 @@ func (o *Orchestrator) waitForInstallComplete(cancelCtx context.Context) error {
 	output := outBuf.Bytes()
 
 	if cmdErr != nil {
-		spinner.Fail("Installation failed!")
 		o.logger.Error(fmt.Sprintf("Installation failed:\n%s", string(output)))
 		return fmt.Errorf("installation completion failed: %w", cmdErr)
 	}
 
-	spinner.Success("Installation Complete!")
 	o.logger.Info("Installation Complete! (Details safely recorded to deployment.log)")
 	
-	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
+	// Write massive output ONLY to the log file, bypassing the terminal
 	o.logger.FileOnly().Write([]byte("\n=== INSTALLER OUTPUT ===\n"))
 	o.logger.FileOnly().Write(output)
 	o.logger.FileOnly().Write([]byte("\n========================\n"))
@@ -137,11 +127,7 @@ func (o *Orchestrator) waitForAgentInstall(cancelCtx context.Context) error {
 	}
 
 	spinnerText := fmt.Sprintf("Waiting for Agent-based installation to complete (%d min timeout, may take %s)...", timeoutSecs/60, timeEstimate)
-	spinner, _ := pterm.DefaultSpinner.WithWriter(o.logger.TerminalOnly()).Start(spinnerText)
-	defer spinner.Stop()
-
-	o.logger.Info(fmt.Sprintf("Timeout: %d seconds (%d minutes)", timeoutSecs, timeoutSecs/60))
-	o.logger.Info("Executing: openshift-install agent wait-for install-complete")
+	o.logger.Info(spinnerText)
 
 	timeoutCtx, cancel := context.WithTimeout(cancelCtx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
@@ -159,15 +145,13 @@ func (o *Orchestrator) waitForAgentInstall(cancelCtx context.Context) error {
 	output := outBuf.Bytes()
 
 	if cmdErr != nil {
-		spinner.Fail("Agent installation failed!")
 		o.logger.Error(fmt.Sprintf("Agent installation failed:\n%s", string(output)))
 		return fmt.Errorf("agent installation completion failed: %w", cmdErr)
 	}
 
-	spinner.Success("Agent Installation Complete!")
 	o.logger.Info("Agent Installation Complete! (Details safely recorded to deployment.log)")
 	
-	// --- FIX: Write massive output ONLY to the log file, bypassing the terminal ---
+	// Write massive output ONLY to the log file, bypassing the terminal
 	o.logger.FileOnly().Write([]byte("\n=== AGENT INSTALLER OUTPUT ===\n"))
 	o.logger.FileOnly().Write(output)
 	o.logger.FileOnly().Write([]byte("\n==============================\n"))
@@ -203,8 +187,8 @@ func (o *Orchestrator) autoApproveCSRs(ctx context.Context) {
 			output, err := cmd.CombinedOutput()
 			
 			if err == nil && strings.Contains(string(output), "approved") {
-				// Safely print above the spinner on the terminal
-				pterm.Info.WithWriter(o.logger.TerminalOnly()).Println("Approved pending worker CSRs")
+				// Route through logger so it safely intercepts and updates the spinner text
+				o.logger.Info("Approved pending worker CSRs")
 				
 				// Send the raw output to the debug log file silently
 				o.logger.Debug(fmt.Sprintf("CSR Auto-Approver details:\n%s", string(output)))

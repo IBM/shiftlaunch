@@ -72,7 +72,7 @@ func (v *Validator) SetLogger(l *logger.Logger) {
 // Validate performs comprehensive validation in checks
 func (v *Validator) Validate(ctx context.Context) error {
 	// Check 1: Config Validation (static, fast)
-	v.log.Phase("[Check 1/4] Validating configuration syntax and parameters...")
+	v.log.StartPhase("[Check 1/4] Validating configuration syntax and parameters...")
 
 	v.validateController()
 	v.validateHMC()
@@ -80,23 +80,23 @@ func (v *Validator) Validate(ctx context.Context) error {
 	v.validateOpenShift()
 	v.validateNodes()
 
-	v.log.Info("Configuration valid")
+	v.log.EndPhase(true, "[Check 1/4] Configuration valid")
 
 	// Check 2: Local Controller Environment Validation
 	if v.exec != nil {
-		v.log.Phase("[Check 2/4] Validating local controller environment and resources...")
+		v.log.StartPhase("[Check 2/4] Validating local controller environment and resources...")
 		v.validateLocalEnvironment(ctx)
-		v.log.Info("Local environment validated")
+		v.log.EndPhase(true, "[Check 2/4] Local environment validated")
 	}
 
 	// Check 3: HMC Validation (HMC API-based)
 	if v.hmcClient != nil {
-		v.log.Phase("[Check 3/4] Validating HMC connectivity and LPAR readiness...")
+		v.log.StartPhase("[Check 3/4] Validating HMC connectivity and LPAR readiness...")
 		v.validateBYOILPARs()
 		if v.cfg.Nodes.BootMethod == "iso" {
 			v.validateMediaRepositorySpace()
 		}
-		v.log.Info("HMC infrastructure validated")
+		v.log.EndPhase(true, "[Check 3/4] HMC infrastructure validated")
 	}
 
 	// Check 4: External Services Validation
@@ -104,11 +104,12 @@ func (v *Validator) Validate(ctx context.Context) error {
 		hasExternalServices := !v.cfg.ManagedServices.DNS || !v.cfg.ManagedServices.DHCP || !v.cfg.ManagedServices.PXE || !v.cfg.ManagedServices.LoadBalancer
 
 		if hasExternalServices {
-			v.log.Phase("[Check 4/4] Validating external unmanaged services...")
+			v.log.StartPhase("[Check 4/4] Validating external unmanaged services...")
 			v.validateExternalServices(ctx)
-			v.log.Info("External services validated")
+			v.log.EndPhase(true, "[Check 4/4] External services validated")
 		} else {
-			v.log.Phase("[Check 4/4] Skipping external services (all services are managed)")
+			v.log.StartPhase("[Check 4/4] Validating external unmanaged services...")
+			v.log.EndPhase(true, "[Check 4/4] Skipping external services (all services are managed)")
 		}
 	}
 

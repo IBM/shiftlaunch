@@ -62,7 +62,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			autoResume = true
 			state.ResumeCount++
 			stateManager.SaveState(state)
-			log.Info("Detected incomplete deployment. Automatically resuming from last successful phase...",
+			// Downgraded to Debug so it stays out of the user's terminal
+			log.Debug("Detected incomplete deployment. Automatically resuming from last successful phase...",
 				"cluster", cfg.OpenShift.ClusterName,
 				"last_phase", state.CurrentPhase,
 				"status", state.Status)
@@ -72,7 +73,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// Handle workspace markers
 	deletedMarker := filepath.Join(workspaceDir, ".deleted")
 	if _, err := os.Stat(deletedMarker); err == nil {
-		log.Info("Cluster was previously deleted. Wiping directory for a fresh deployment...", "cluster", cfg.OpenShift.ClusterName)
+		// Downgraded to Debug so it doesn't clutter the terminal
+		log.Debug("Cluster was previously deleted. Wiping directory for a fresh deployment...", "cluster", cfg.OpenShift.ClusterName)
 		os.RemoveAll(workspaceDir)
 		os.MkdirAll(workspaceDir, 0755)
 		
@@ -85,7 +87,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			// Update orchestrator with new logger
 			orch = orchestrator.NewOrchestrator(cfg, daemonCfg, newLogger, workspaceDir, debug)
 			log = orch.GetLogger()
-			log.Info("Logger recreated after workspace cleanup")
+			// Downgraded to Debug
+			log.Debug("Logger recreated after workspace cleanup")
 		}
 	}
 
@@ -99,7 +102,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 				"cluster", cfg.OpenShift.ClusterName,
 				"config", existingConfigPath)
 		}
-		log.Info("Resuming failed cluster deployment", "cluster", cfg.OpenShift.ClusterName)
+		// Downgraded to Debug to avoid redundancy with the "=== Resuming ===" banner below
+		log.Debug("Resuming failed cluster deployment", "cluster", cfg.OpenShift.ClusterName)
 	} else if _, err := os.Stat(managedMarker); err == nil {
 		log.Error("Cluster is already managed and fully deployed", "cluster", cfg.OpenShift.ClusterName, "workspace", workspaceDir)
 		log.Info("If you want to:")
@@ -130,18 +134,24 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// PRE-FLIGHT VALIDATION (Only run on fresh deployments!)
 	// ========================================================================
 	if !autoResume {
-		log.Info("Running pre-flight validation checks...")
+		// Change from Info to StartPhase to spin up the UI
+		log.StartPhase("Running pre-flight validation checks...")
+		
 		exec := localexec.NewLocalClient(log)
 		validator := validation.NewValidator(cfg, exec, debug)
 		validator.SetLogger(log)
 
 		// Attach HMC client for LPAR validation
+		// The "Connecting to HMC..." Info logs inside here will be automatically intercepted by the spinner!
 		if provider, perr := compute.NewProvider(cfg, log, debug); perr == nil {
 			if hmcProvider, ok := provider.(*compute.HMCProvider); ok {
 				validator.SetHMCClient(hmcProvider.GetHMCClient())
 				defer hmcProvider.Cleanup()
 			}
 		}
+
+		// Cleanly end this initialization spinner before the actual Validator starts its [Check X/4] spinners
+		log.EndPhase(true, "Validation prerequisites initialized")
 
 		if valErr := validator.Validate(ctx); valErr != nil {
 			log.Error("Pre-flight validation failed", "error", valErr)
@@ -174,9 +184,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	// Execute deployment
 	if autoResume {
-		log.Info("=== Resuming Cluster Deployment ===")
+		log.Info(fmt.Sprintf("=== Resuming Cluster Deployment: %s ===", cfg.OpenShift.ClusterName))
 	} else {
-		log.Info("=== Starting New Cluster Deployment ===")
+		log.Info(fmt.Sprintf("=== Starting New Cluster Deployment: %s ===", cfg.OpenShift.ClusterName))
 	}
 
 	cmdStartTime := time.Now()
