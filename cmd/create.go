@@ -141,7 +141,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			if err := os.Rename(existingConfigPath, configBackupPath); err != nil {
 				log.Warn("Failed to backup existing config", "error", err)
 			} else {
-				log.Info("Backed up existing config", "path", configBackupPath)
+				log.Debug("Backed up existing config", "path", configBackupPath)
 			}
 		}
 		

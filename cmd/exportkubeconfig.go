@@ -13,16 +13,15 @@ import (
 )
 
 var (
-	exportClusterName string
-	exportKubeconfig  string
-	exportStdout      bool
+	exportKubeconfig string
+	exportStdout     bool
 )
 
 var exportCmd = &cobra.Command{
-	Use:   "export",
-	Short: "Export cluster resources",
+	Use:     "export",
+	Short:   "Export cluster resources",
 	GroupID: "utils",
-	Long:  `Export cluster resources such as kubeconfig.`,
+	Long:    `Export cluster resources such as kubeconfig.`,
 }
 
 var exportKubeconfigCmd = &cobra.Command{
@@ -41,14 +40,18 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 	exportCmd.AddCommand(exportKubeconfigCmd)
 
-	exportKubeconfigCmd.Flags().StringVarP(&exportClusterName, "name", "n", "", "Cluster name (required)")
 	exportKubeconfigCmd.Flags().StringVar(&exportKubeconfig, "kubeconfig", "", "Destination kubeconfig path (default: $KUBECONFIG or $HOME/.kube/config)")
 	exportKubeconfigCmd.Flags().BoolVar(&exportStdout, "stdout", false, "Print kubeconfig to stdout instead of file")
-	exportKubeconfigCmd.MarkFlagRequired("name")
+	
+	// Note: --cluster is inherited globally from root.go
 }
 
 func runExportKubeconfig(cmd *cobra.Command, args []string) error {
-	return ExportKubeconfig(exportClusterName, exportKubeconfig, exportStdout)
+	// clusterName is a global variable populated by root.go
+	if clusterName == "" {
+		return fmt.Errorf("cluster name is required. Use the --cluster flag")
+	}
+	return ExportKubeconfig(clusterName, exportKubeconfig, exportStdout)
 }
 
 // KubeconfigStructure represents the kubeconfig YAML structure
@@ -80,7 +83,7 @@ type KubeconfigUser struct {
 func ExportKubeconfig(clusterName, kubeconfigPath string, stdout bool) error {
 	// 1. Validate cluster name is provided
 	if clusterName == "" {
-		return fmt.Errorf("cluster name is required. Use -n or --name flag")
+		return fmt.Errorf("cluster name is required. Use the --cluster flag")
 	}
 
 	// 2. Load daemon config to get workspace directory
@@ -297,5 +300,3 @@ func writeKubeconfig(kubeconfig *KubeconfigStructure, destPath string) error {
 
 	return nil
 }
-
-// Made with Bob

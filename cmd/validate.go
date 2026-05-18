@@ -56,11 +56,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// The validator handles all its own Phase UI and error printing now
 	if err := validator.Validate(ctx); err != nil {
-		return fmt.Errorf("validation failed for cluster %s", cfg.OpenShift.ClusterName)
+		log.Error("Validation failed", "error", err)
+		return fmt.Errorf("validation failed for cluster %s: %w", cfg.OpenShift.ClusterName, err)
 	}
 
 	// Just a single, clean success message at the end
-	log.Info("✅ All validations passed successfully!")
+	log.Info("All validations passed successfully!")
 
 	return nil
 }

@@ -740,12 +740,12 @@ func (o *Orchestrator) GetClusterStatus(ctx context.Context) string {
 
 		sb.WriteString(pterm.Cyan("\n◉ ACCESS CREDENTIALS\n"))
 		credData := pterm.TableData{}
-		kubeconfigPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeconfig")
+		//kubeconfigPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeconfig")
 		pwPath := filepath.Join(o.workspaceDir, "install-dir", "auth", "kubeadmin-password")
 
-		if _, err := os.Stat(kubeconfigPath); err == nil {
-			credData = append(credData, []string{"KUBECONFIG:", kubeconfigPath})
-		}
+		//if _, err := os.Stat(kubeconfigPath); err == nil {
+		//	credData = append(credData, []string{"KUBECONFIG:", kubeconfigPath})
+		//}
 		if pwData, err := os.ReadFile(pwPath); err == nil {
 			credData = append(credData, []string{"Password:", string(pwData)})
 		}

@@ -439,7 +439,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 
 	var bootDevices []hmc.NetworkBootDevice
 	for i := 0; i < maxRetries; i++ {
-		bootDevices, err = h.hmcClient.GetNetworkBootDevices(ctx, node.UUID, profileUUID, true)
+		bootDevices, err = h.hmcClient.GetNetworkBootDevicesForLpar(ctx, node.UUID, profileUUID, true)
 		if err == nil && len(bootDevices) > 0 {
 			break
 		}
