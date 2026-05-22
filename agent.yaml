@@ -2,7 +2,7 @@
 # ShiftLaunch Internal Daemon Configuration (agent.yaml)
 # =============================================================================
 # ShiftLaunch uses sensible internal defaults. If you need to override timeouts,
-# ports, or paths, modify this file. The binary will automatically detect it 
+# ports, or paths, modify this file. The binary will automatically detect it
 # if it is placed in the same directory from where the command is run.
 # =============================================================================
 

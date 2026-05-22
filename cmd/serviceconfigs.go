@@ -60,7 +60,7 @@ func dumpConfig(orch *orchestrator.Orchestrator, cfg *types.AgentConfig) error {
 	}
 
 	if !hasExternalServices {
-		orch.GetLogger().Info("Cluster does not use any external services. All services will be managed by Shiftlaunch.", "cluster", clusterName)
+		orch.GetLogger().Info("Cluster does not use any external services. All services will be managed by ShiftLaunch.", "cluster", clusterName)
 		return nil
 	}
 
@@ -213,7 +213,7 @@ func dumpPXEConfigFromTemplate(clusterName string, cfg *types.AgentConfig, nodes
 	}
 	fmt.Println()
 
-	fmt.Println("Note: Ignition files are served by Shiftlaunch controller on port 8080")
+	fmt.Println("Note: Ignition files are served by ShiftLaunch controller on port 8080")
 	fmt.Println()
 
 	return nil

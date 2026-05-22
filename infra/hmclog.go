@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"github.ibm.com/sudeeshjohn/shiftlaunch/logger"
 	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
+	"github.ibm.com/sudeeshjohn/shiftlaunch/logger"
 )
 
 // logWriter acts as a bridge between the standard io.Writer and our custom logger

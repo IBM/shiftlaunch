@@ -11,6 +11,7 @@ ShiftLaunch provides **end-to-end automation** for OpenShift deployment on IBM P
 ### 🎯 Boot Methods
 
 #### 1. Agent ISO Boot (Recommended for Production)
+
 - ✅ **Simplified Deployment**: Single ISO contains all installation artifacts.
 - ✅ **No DHCP/PXE Required**: Eliminates network boot complexity (uses static IPs via NMState).
 - ✅ **NFS-Based**: ISO served via NFS from the controller directly to the VIOS.
@@ -19,6 +20,7 @@ ShiftLaunch provides **end-to-end automation** for OpenShift deployment on IBM P
 - ✅ **Automatic Cleanup**: ISO mappings and NFS exports are removed after installation.
 
 #### 2. Network Boot (PXE/Netboot)
+
 - ✅ **Traditional UPI**: Standard PXE boot workflow.
 - ✅ **HMC REST API**: Automated netboot using IBM's Hardware Management Console.
 - ✅ **DHCP/TFTP/HTTP**: Full network boot stack managed locally.
@@ -26,6 +28,7 @@ ShiftLaunch provides **end-to-end automation** for OpenShift deployment on IBM P
 - ✅ **Flexible**: Supports custom kernel boot parameters.
 
 ### 🚀 Core Features
+
 - ✅ **Bring Your Own Infrastructure (BYOI)**: Use existing DNS/DHCP/PXE/LoadBalancers or let ShiftLaunch manage them locally.
 - ✅ **Smart Configuration Generator**: Interactive, dynamic template generation that adapts to your chosen topology and boot method.
 - ✅ **Installation Monitoring**: Automated monitoring with `openshift-install wait-for` commands.
@@ -39,11 +42,13 @@ ShiftLaunch provides **end-to-end automation** for OpenShift deployment on IBM P
 ## Architecture
 
 ### Single VIP Architecture
+
 - **One IP per Cluster**: Replaces the traditional dual VIP (API + Ingress) approach.
 - **Port-Based Routing**: HAProxy routes traffic via Layer 4 TCP based strictly on ports (6443 for API, 22623 for Machine Config, 80/443 for Ingress).
 - **Simplified DNS**: All DNS records (api, api-int, *.apps) point to a single VIP.
 
 ### Multi-Cluster Support
+
 - **IP Aliasing**: Each cluster gets a dedicated VIP aliased to the controller's physical interface.
 - **Workspace Isolation**: Separate directories, configs, and service instances located at `/opt/shiftlaunch/clusters/<cluster-name>/`.
 - **HTTP Directory Structure**: Isolated `/var/www/html/<cluster-name>/` paths for hosting ignition and RHCOS payloads.
@@ -51,6 +56,8 @@ ShiftLaunch provides **end-to-end automation** for OpenShift deployment on IBM P
 ---
 
 ## Usage
+
+> **⚠️ Important:** ShiftLaunch must be run from the controller node (bastion host) running **RHEL 9/10** or **CentOS 9/10**. The controller node orchestrates all deployment activities including HMC interactions, service management, and cluster provisioning.
 
 ### Quick Start
 
@@ -74,6 +81,7 @@ vi my-sno.yaml
 ### Command Reference
 
 #### Generate Configuration Template
+
 Create a highly-documented configuration template tailored exactly to your topology and boot method. The generator is "smart"—it automatically omits the `bootstrap` node and `rhcos_images` URLs if you select ISO boot, and toggles the required managed services (like NFS vs PXE) accordingly.
 
 ```bash
@@ -91,6 +99,7 @@ Create a highly-documented configuration template tailored exactly to your topol
 ```
 
 #### Validate Configuration
+
 Validate your YAML configuration, verify local controller disk space, check for VIP conflicts, and validate LPAR/Storage existence on the HMC:
 
 ```bash
@@ -98,6 +107,7 @@ Validate your YAML configuration, verify local controller disk space, check for 
 ```
 
 #### Deploy Cluster
+
 Deploy a new OpenShift cluster. If a previous deployment failed, running this command again will automatically detect the `state.json` file and safely resume from the last completed phase.
 
 ```bash
@@ -105,6 +115,7 @@ Deploy a new OpenShift cluster. If a previous deployment failed, running this co
 ```
 
 #### Check Status
+
 View real-time cluster status, node assignments, and connection credentials:
 
 ```bash
@@ -112,6 +123,7 @@ View real-time cluster status, node assignments, and connection credentials:
 ```
 
 **Status Output Includes:**
+
 - Cluster deployment status and phase history.
 - Cluster nodes with hostnames, roles, and IP addresses.
 - Service endpoints (API, Console, OAuth, Prometheus, Grafana).
@@ -119,6 +131,7 @@ View real-time cluster status, node assignments, and connection credentials:
 - Local path to your `kubeconfig` and `kubeadmin` password.
 
 #### Delete Cluster
+
 Safely tear down a deployed cluster. 
 
 ShiftLaunch uses **Intelligent Partial Failure Handling**. It tracks exactly which resources (LPARs, Virtual Disks, Optical Media) fail to delete. If a deletion fails (e.g., a disk is locked), it preserves the failure in the state file. Re-running the delete command will safely retry *only* the failed resources, ensuring zero orphaned infrastructure.
@@ -128,6 +141,7 @@ ShiftLaunch uses **Intelligent Partial Failure Handling**. It tracks exactly whi
 ```
 
 #### Dump Configuration Requirements
+
 If you opt to use external, unmanaged services (BYOI mode), generate the exact DNS, DHCP, and Load Balancer rules you need to hand off to your network administrators:
 
 ```bash
@@ -147,6 +161,7 @@ ShiftLaunch supports flexible infrastructure management through the `managed_ser
 3. **BYOI Mode** - Use all external services; ShiftLaunch only handles HMC LPAR provisioning, Ignition generation, and installation monitoring.
 
 **Example: Fully Managed (ISO Boot)**
+
 ```yaml
 managed_services:
   dns: true            
@@ -157,6 +172,7 @@ managed_services:
 ```
 
 **Example: BYOI Mode (Netboot)**
+
 ```yaml
 managed_services:
   dns: false           # Using enterprise InfoBlox
@@ -173,7 +189,8 @@ managed_services:
 ShiftLaunch requires specific environments and firmware levels to orchestrate OpenShift flawlessly across IBM Power Systems.
 
 ### Pull Secret
-You need a valid Red Hat pull secret (`pull-secret.json`) to proceed. Please ensure this file is placed in the same directory as the `shiftlaunch` executable. 
+
+You need a valid Red Hat pull secret (`pull-secret.json`) to proceed. Please ensure this file is placed in the same directory as the `shiftlaunch` executable.
 
 You can obtain your pull secret from the [Red Hat Customer Portal](https://access.redhat.com/solutions/4844461).
 
@@ -181,7 +198,7 @@ You can obtain your pull secret from the [Red Hat Customer Portal](https://acces
 
 | Component | Supported Versions / Firmware |
 | :--- | :--- |
-| **Controller Node (OS)** | RHEL 9, CentOS 9 |
+| **Controller Node (OS)** | RHEL 9/10, CentOS 9/10 |
 | **Hardware Management Console (HMC)** | **V11R2** (Build Level: 2604091530, Service Pack: 1120)<br>**V11R1** (Build Level: 2502191030, Service Pack: 1110)<br>**V10R3 M1063** |
 | **IBM Power Systems (PowerFW)** | `RB1120_fw1120.00`<br>`ML1060_fw1060.51 (148)` |
 | **Virtual I/O Server (VIOS)** | `4.1.2.0`<br>`4.1.1.10` |

@@ -205,8 +205,8 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 			o.logger.Warn("Failed to release lock", "error", lockErr)
 		}
 	}()
+o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
 
-	o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o.cfg.OpenShift.ClusterName)
 
 	// --- PHASE 0: VALIDATION (Only for fresh deployments) ---
 	if !resume || len(o.state.CompletedPhases) == 0 {

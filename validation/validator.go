@@ -11,10 +11,10 @@ import (
 	"strings"
 	"sync"
 
+	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 	"github.ibm.com/sudeeshjohn/shiftlaunch/localexec"
 	"github.ibm.com/sudeeshjohn/shiftlaunch/logger"
 	"github.ibm.com/sudeeshjohn/shiftlaunch/types"
-	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -625,7 +625,7 @@ func (v *Validator) validateBYOILPARs() {
 			} else {
 				if lpar.PartitionState == "running" {
 					v.errors = append(v.errors, fmt.Sprintf(
-						"SAFETY LOCK: BYOI LPAR '%s' is currently RUNNING on system '%s'. Shiftlaunch refuses to overwrite a running LPAR to prevent accidental data loss. Please power it off manually before deploying.",
+						"SAFETY LOCK: BYOI LPAR '%s' is currently RUNNING on system '%s'. ShiftLaunch refuses to overwrite a running LPAR to prevent accidental data loss. Please power it off manually before deploying.",
 						node.ExistingLPARName, node.SystemName))
 				} else {
 					v.log.Info(fmt.Sprintf("LPAR '%s' exists on system '%s' (state: %s, role: %s)",

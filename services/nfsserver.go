@@ -77,8 +77,8 @@ func (n *NFSManager) Setup(ctx context.Context) error {
 // Cleanup removes the cluster's NFS export and dynamically unpublishes the directory
 func (n *NFSManager) Cleanup(ctx context.Context) error {
 	n.logger.Info("Cleaning up NFS configuration...", "cluster", n.cfg.OpenShift.ClusterName)
+exportPath := fmt.Sprintf("/etc/exports.d/shiftlaunch-%s.exports", n.cfg.OpenShift.ClusterName)
 
-	exportPath := fmt.Sprintf("/etc/exports.d/shiftlaunch-%s.exports", n.cfg.OpenShift.ClusterName)
 
 	// Remove the specific drop-in export file
 	if _, err := n.executor.Execute(ctx, fmt.Sprintf("sudo rm -f %s", exportPath)); err != nil {

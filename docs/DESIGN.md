@@ -1,8 +1,8 @@
 # 🎯 ShiftLaunch: Software Design Document
 
-**Version:** 3.0 (Greenfield Architecture)  
-**System:** IBM Power Systems (ppc64le)  
-**Component:** OpenShift UPI (User-Provisioned Infrastructure) Deployer  
+**Version:** 3.0 (Greenfield Architecture)
+**System:** IBM Power Systems (ppc64le)
+**Component:** OpenShift UPI (User-Provisioned Infrastructure) Deployer
 
 ---
 

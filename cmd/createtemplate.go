@@ -101,9 +101,9 @@ hmc:
 # 4. NETWORK CONFIGURATION
 # -----------------------------------------------------------------------------
 network:
-  # The Virtual IP (VIP) for the cluster. If managed_services.load_balancer is 
+  # The Virtual IP (VIP) for the cluster. If managed_services.load_balancer is
   # true, ShiftLaunch will automatically alias this IP to the controller interface.
-  loadbalancer_ip: "10.20.x.y"      
+  loadbalancer_ip: "10.20.x.y"
   
   # The subnet where the OpenShift nodes reside
   machine_network_cidr: "10.20.x.0/24" 
@@ -113,7 +113,7 @@ network:
   
   # Upstream DNS server. Leave empty ("") if managed_services.dns is true,
   # as ShiftLaunch will act as the primary nameserver.
-  nameserver: ""                    
+  nameserver: ""
   
   # External DNS servers for resolving public domains (e.g., quay.io)
   dns_forwarders:
@@ -208,7 +208,7 @@ const agentConfigTemplate = `# =================================================
 # ShiftLaunch Internal Daemon Configuration (agent.yaml)
 # =============================================================================
 # ShiftLaunch uses sensible internal defaults. If you need to override timeouts,
-# ports, or paths, modify this file. The binary will automatically detect it 
+# ports, or paths, modify this file. The binary will automatically detect it
 # if it is placed in the same directory from where the command is run.
 # =============================================================================
 
