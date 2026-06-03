@@ -17,9 +17,10 @@ import (
 // Uses RWMutex to allow concurrent reads but exclusive writes during re-authentication
 var apiTrafficMutex sync.RWMutex
 
+// HMCProvider implements the compute provider interface for IBM Hardware Management Console (HMC)
 type HMCProvider struct {
 	cfg          *types.AgentConfig
-	hmcClient    *hmc.HmcRestClient
+	hmcClient    *hmc.RestClient
 	logger       *logger.Logger
 	debug        bool
 	isoMappings  []types.ISOMapping
@@ -33,7 +34,7 @@ type HMCProvider struct {
 }
 
 // GetHMCClient returns the underlying HMC REST client for external use (e.g., validation)
-func (h *HMCProvider) GetHMCClient() *hmc.HmcRestClient {
+func (h *HMCProvider) GetHMCClient() *hmc.RestClient {
 	return h.hmcClient
 }
 
@@ -376,7 +377,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 		h.logger.Info("LPAR is active. Powering off before network boot...", "state", lparDetailed.PartitionState)
 
 		h.logger.Info("Closing virtual terminal...")
-		_ = h.hmcClient.CloseVirtualTerminalViaSsh(
+		_ = h.hmcClient.CloseVirtualTerminalViaSSH(
 			h.cfg.HMC.IP,
 			h.cfg.HMC.Username,
 			h.cfg.HMC.Password,
@@ -423,7 +424,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 	h.logger.Info("Waiting 10 seconds for LPAR to fully power off...")
 	time.Sleep(10 * time.Second)
 
-	_ = h.hmcClient.CloseVirtualTerminalViaSsh(
+	_ = h.hmcClient.CloseVirtualTerminalViaSSH(
 		h.cfg.HMC.IP,
 		h.cfg.HMC.Username,
 		h.cfg.HMC.Password,
@@ -461,7 +462,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 	time.Sleep(5 * time.Second)
 
 	h.logger.Info("Ensuring virtual terminal is closed before netboot...")
-	_ = h.hmcClient.CloseVirtualTerminalViaSsh(
+	_ = h.hmcClient.CloseVirtualTerminalViaSSH(
 		h.cfg.HMC.IP,
 		h.cfg.HMC.Username,
 		h.cfg.HMC.Password,
@@ -497,6 +498,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 	return nil
 }
 
+// PowerOffNodes powers off all nodes managed by the HMC provider
 func (h *HMCProvider) PowerOffNodes(ctx context.Context) error {
 	h.logger.Info("Fetching LPAR UUIDs for teardown...")
 
@@ -762,7 +764,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 
 		// Create mount directory
 		mkdirCmd := fmt.Sprintf(`viosvrcmd -m %s -p %s -c "mkdir -p %s" --admin`, node.SystemName, viosName, mountPoint)
-		if _, err := hmc.CliRunnerViaSsh(h.cfg.HMC.IP, viosUsername, viosPassword, mkdirCmd, h.debug); err != nil {
+		if _, err := hmc.CliRunnerViaSSH(h.cfg.HMC.IP, viosUsername, viosPassword, mkdirCmd, h.debug); err != nil {
 			return fmt.Errorf("failed to create mount directory: %w", err)
 		}
 
@@ -1231,7 +1233,7 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 
 			h.logger.Info("Creating mount directory on VIOS", "path", mountPoint)
 			mkdirCmd := fmt.Sprintf(`viosvrcmd -m %s -p %s -c "mkdir -p %s" --admin`, node.SystemName, viosName, mountPoint)
-			hmc.CliRunnerViaSsh(h.cfg.HMC.IP, viosUsername, viosPassword, mkdirCmd, h.debug)
+			hmc.CliRunnerViaSSH(h.cfg.HMC.IP, viosUsername, viosPassword, mkdirCmd, h.debug)
 
 			h.logger.Info("Mounting NFS on VIOS", "server", nfsServer, "export", exportPath)
 			_, err = hmc.MountNFS(context.WithoutCancel(ctx), h.hmcClient, node.SystemName, viosName, nfsServer, exportPath, mountPoint, "3", h.debug)
@@ -1576,7 +1578,7 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 
 		h.logger.Info("Removing mount directory from VIOS", "mount_point", mapping.MountPoint)
 		rmdirCmd := fmt.Sprintf(`viosvrcmd -m %s -p %s -c "rmdir %s" --admin`, mapping.SystemName, mapping.VIOSName, mapping.MountPoint)
-		_, err = hmc.CliRunnerViaSsh(h.cfg.HMC.IP, viosUsername, viosPassword, rmdirCmd, h.debug)
+		_, err = hmc.CliRunnerViaSSH(h.cfg.HMC.IP, viosUsername, viosPassword, rmdirCmd, h.debug)
 
 		if err != nil && (strings.Contains(err.Error(), "No such file or directory") || strings.Contains(err.Error(), "not found")) {
 			h.logger.Info("Mount directory already removed", "mount_point", mapping.MountPoint)

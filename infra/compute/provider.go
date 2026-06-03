@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 	"github.ibm.com/sudeeshjohn/shiftlaunch/infra"
 	"github.ibm.com/sudeeshjohn/shiftlaunch/logger"
 	"github.ibm.com/sudeeshjohn/shiftlaunch/types"
-	hmc "github.ibm.com/sudeeshjohn/infra-go-sdk/phmc"
 )
 
-// ComputeProvider defines operations for pre-provisioned infrastructure [cite: 39]
-type ComputeProvider interface {
+// Provider defines operations for pre-provisioned infrastructure [cite: 39]
+type Provider interface {
 	// DiscoverMetadata queries the infra to find UUIDs, MACs, and Location Codes [cite: 39]
 	DiscoverMetadata(ctx context.Context) error
 	
@@ -27,14 +27,16 @@ type ComputeProvider interface {
 	PowerOffNodes(ctx context.Context) error
 }
 
-func NewProvider(cfg *types.AgentConfig, log *logger.Logger, debug bool) (ComputeProvider, error) {
+// NewProvider creates a new compute provider instance without state management
+func NewProvider(cfg *types.AgentConfig, log *logger.Logger, debug bool) (Provider, error) {
 	return NewProviderWithState(cfg, log, debug, nil)
 }
 
-func NewProviderWithState(cfg *types.AgentConfig, log *logger.Logger, debug bool, stateManager *types.StateManager) (ComputeProvider, error) {
+// NewProviderWithState creates a new compute provider instance with optional state management
+func NewProviderWithState(cfg *types.AgentConfig, log *logger.Logger, debug bool, stateManager *types.StateManager) (Provider, error) {
 	log.Debug("Connecting to HMC...", "ip", cfg.HMC.IP, "user", cfg.HMC.Username)
 	
-	client := hmc.NewHmcRestClient(cfg.HMC.IP)
+	client := hmc.NewRestClient(cfg.HMC.IP)
 	
 	// Configure HMC logger to write API traffic to deployment log only (not terminal)
 	hmcLogger := infra.NewHMCLoggerAdapter(log, debug)

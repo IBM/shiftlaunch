@@ -29,7 +29,7 @@ import (
 type Validator struct {
 	cfg          *types.AgentConfig
 	exec         *localexec.LocalClient
-	hmcClient    *hmc.HmcRestClient
+	hmcClient    *hmc.RestClient
 	debug        bool
 	errors       []string
 	warnings     []string
@@ -59,7 +59,7 @@ func NewValidator(cfg *types.AgentConfig, exec *localexec.LocalClient, debug boo
 }
 
 // SetHMCClient sets the HMC client for active validation
-func (v *Validator) SetHMCClient(client *hmc.HmcRestClient) {
+func (v *Validator) SetHMCClient(client *hmc.RestClient) {
 	v.hmcClient = client
 }
 

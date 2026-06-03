@@ -10,7 +10,7 @@ require (
 require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.ibm.com/sudeeshjohn/infra-go-sdk v0.0.0-20260522044418-e7b8cfed9a19
+	github.ibm.com/sudeeshjohn/infra-go-sdk v0.0.0-20260603084000-d86292f0260f
 	go.yaml.in/yaml/v3 v3.0.4
 )
 
