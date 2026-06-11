@@ -396,6 +396,52 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 				o.trackServiceEnd(skipSvc, nil, "User managed")
 			}
 
+			// Track Squid Proxy configuration
+			if o.cfg.ManagedServices.Proxy {
+				squidSvc := o.trackServiceStart("squid-proxy", "proxy", true)
+				squidSvc.ServiceName = "squid"
+				squidSvc.ConfigFile = "/etc/squid/squid.conf"
+				
+				o.logger.Info("Configuring Local Squid Proxy...")
+				squidMgr := services.NewSquidManager(o.cfg, o.executor, o.logger, o.workspaceDir)
+				
+				if err := squidMgr.Setup(ctx); err != nil {
+					o.trackServiceEnd(squidSvc, err, "")
+					phaseErr = err
+					return
+				}
+				o.trackServiceEnd(squidSvc, nil, "Squid proxy configured on port 3128")
+			} else {
+				o.logger.Info("Skipping Squid Proxy (User Managed)")
+				skipSvc := o.trackServiceStart("squid-proxy", "proxy", false)
+				o.trackServiceEnd(skipSvc, nil, "User managed")
+			}
+
+			// Track Local Registry configuration for disconnected deployments
+			if o.cfg.DisconnectedConfig.Enabled && o.cfg.ManagedServices.Registry {
+				registrySvc := o.trackServiceStart("local-registry", "registry", true)
+				registrySvc.ServiceName = "local-registry"
+				registrySvc.ConfigFile = "/etc/systemd/system/local-registry.service"
+				
+				o.logger.Info("Configuring Local Container Registry for Disconnected Deployment...")
+				o.logger.Info("This will mirror OpenShift images and may take 15-30 minutes...")
+				
+				registryMgr := services.NewRegistryManager(o.cfg, o.executor, o.logger, o.stateManager, o.state, o.workspaceDir)
+				
+				if err := registryMgr.Setup(ctx, o.workspaceDir); err != nil {
+					o.trackServiceEnd(registrySvc, err, "")
+					phaseErr = fmt.Errorf("failed to setup local registry: %w", err)
+					return
+				}
+				
+				registryURL := registryMgr.GetRegistryURL()
+				o.trackServiceEnd(registrySvc, nil, fmt.Sprintf("Local registry configured at https://%s", registryURL))
+			} else if o.cfg.DisconnectedConfig.Enabled {
+				o.logger.Info("Skipping Local Registry (User Managed)")
+				skipSvc := o.trackServiceStart("local-registry", "registry", false)
+				o.trackServiceEnd(skipSvc, nil, "User managed")
+			}
+
 			dnsmasq := services.NewDNSmasqManager(o.cfg, o.daemonCfg, o.executor)
 
 			if o.cfg.ManagedServices.DNS {
@@ -416,7 +462,7 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 				o.trackServiceEnd(skipSvc, nil, "User managed")
 			}
 
-			if o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "iso" {
+			if o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "agent" {
 				dhcpSvc := o.trackServiceStart("dhcp", "dhcp", true)
 				dhcpSvc.ServiceName = "dnsmasq"
 				dhcpSvc.ConfigFile = "/etc/dnsmasq.d/dhcp.conf"
@@ -438,7 +484,7 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 				o.trackServiceEnd(skipSvc, nil, skipReason)
 			}
 
-			if o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "iso" {
+			if o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "agent" {
 				pxeSvc := o.trackServiceStart("pxe", "pxe", true)
 				pxeSvc.ServiceName = "dnsmasq"
 				pxeSvc.ConfigFile = "/etc/dnsmasq.d/tftp.conf"
@@ -466,8 +512,8 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 				o.trackServiceEnd(skipSvc, nil, skipReason)
 			}
 
-			needsDHCP := o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "iso"
-			needsPXE := o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "iso"
+			needsDHCP := o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "agent"
+			needsPXE := o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "agent"
 
 			if o.cfg.ManagedServices.DNS || needsDHCP || needsPXE {
 				restartSvc := o.trackServiceStart("dnsmasq-restart", "service-restart", true)
@@ -496,6 +542,12 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 				o.logger.Warn("Failed to update /etc/hosts (installer wait phase may fail)", "error", err)
 			} else {
 				o.trackServiceEnd(hostsSvc, nil, "Added cluster API to /etc/hosts for local resolution")
+				
+				// THE FIX: Force Squid to flush its cache and learn the new OpenShift API routes!
+				if o.cfg.ManagedServices.Proxy {
+					_ = o.executor.SystemctlRestart(ctx, "squid")
+					o.logger.Debug("Reloaded Squid proxy to register new API routing")
+				}
 			}
 			// ========================================================================
 		}()
@@ -534,7 +586,7 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 			}
 			o.trackServiceEnd(ignSvc, nil, "Generated ignition configs for all nodes")
 
-			if o.cfg.Nodes.BootMethod != "iso" {
+			if o.cfg.Nodes.BootMethod != "agent" {
 				httpSvc := o.trackServiceStart("http-server", "http", true)
 				httpSvc.ServiceName = "httpd"
 				httpSvc.ConfigFile = "/etc/httpd/conf.d/shiftlaunch.conf"
@@ -578,7 +630,8 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 						phaseErr = fmt.Errorf("failed to setup NFS server: %w", err)
 						return
 					}
-					exportPath := filepath.Join(o.workspaceDir, fmt.Sprintf("%s-iso", o.cfg.OpenShift.ClusterName))
+					// THE FIX: Point the log message to the actual exported directory
+					exportPath := filepath.Join(o.workspaceDir, "install-dir")
 					o.trackServiceEnd(nfsSvc, nil, fmt.Sprintf("NFS export configured: %s", exportPath))
 				} else {
 					o.logger.Info("Skipping NFS Server setup (User Managed)")

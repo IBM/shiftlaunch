@@ -12,9 +12,9 @@ import (
 
 // WaitForBootstrap waits for the OpenShift bootstrap process to complete
 func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error {
-	// Skip bootstrap wait for Agent ISO - it doesn't have a separate bootstrap phase
-	if o.cfg.Nodes.BootMethod == "iso" {
-		o.logger.Info("Skipping bootstrap wait (Agent ISO uses unified installation)")
+	// Skip bootstrap wait for Agent boot - it doesn't have a separate bootstrap phase
+	if o.cfg.Nodes.BootMethod == "agent" {
+		o.logger.Info("Skipping bootstrap wait (Agent boot uses unified installation)")
 		return nil
 	}
 
@@ -63,8 +63,8 @@ func (o *Orchestrator) waitForBootstrapComplete(cancelCtx context.Context) error
 
 // WaitForInstall waits for installation to complete and auto-approves worker CSRs
 func (o *Orchestrator) waitForInstallComplete(cancelCtx context.Context) error {
-	// Use agent-specific wait for ISO boot
-	if o.cfg.Nodes.BootMethod == "iso" {
+	// Use agent-specific wait for Agent boot
+	if o.cfg.Nodes.BootMethod == "agent" {
 		return o.waitForAgentInstall(cancelCtx)
 	}
 

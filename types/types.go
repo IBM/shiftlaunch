@@ -6,12 +6,13 @@ import (
 
 // AgentConfig represents the root of the shiftlaunch config.yaml
 type AgentConfig struct {
-	ManagedServices ManagedServicesConfig `yaml:"managed_services"`
-	Controller      ControllerConfig      `yaml:"controller"`
-	HMC             HMCConfig             `yaml:"hmc"`
-	Network         NetworkConfig         `yaml:"network"`
-	OpenShift       OpenShiftConfig       `yaml:"openshift"`
-	Nodes           ClusterNodesConfig    `yaml:"nodes"`
+	ManagedServices    ManagedServicesConfig    `yaml:"managed_services"`
+	Controller         ControllerConfig         `yaml:"controller"`
+	HMC                HMCConfig                `yaml:"hmc"`
+	Network            NetworkConfig            `yaml:"network"`
+	OpenShift          OpenShiftConfig          `yaml:"openshift"`
+	Nodes              ClusterNodesConfig       `yaml:"nodes"`
+	DisconnectedConfig DisconnectedConfig       `yaml:"disconnected,omitempty"`
 }
 
 type ManagedServicesConfig struct {
@@ -20,11 +21,27 @@ type ManagedServicesConfig struct {
 	PXE          bool `yaml:"pxe"`
 	LoadBalancer bool `yaml:"load_balancer"`
 	NFS          bool `yaml:"nfs"`
+	Proxy        bool `yaml:"proxy"`
+	Registry     bool `yaml:"registry"`
+}
+
+// DisconnectedConfig holds configuration for disconnected/airgapped deployments
+type DisconnectedConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	ReleaseType      string `yaml:"release_type,omitempty"` // "official" (default) or "ci"
+	RegistryImage    string `yaml:"registry_image"`
+	RegistryHostname string `yaml:"registry_hostname,omitempty"`
+	RegistryUsername string `yaml:"registry_username"`
+	RegistryPassword string `yaml:"registry_password"`
+	RegistryCAFile   string `yaml:"registry_ca_file,omitempty"`
+	AutoMirror       bool   `yaml:"auto_mirror"`
+	ReleaseImage     string `yaml:"release_image"`
+	LocalRepo        string `yaml:"local_repo"`
 }
 
 type ControllerConfig struct {
 	NetworkInterface string `yaml:"network_interface"`
-	IP               string `yaml:"-"` // Auto-discovered at runtime via localexec
+	IP               string `yaml:"ip,omitempty"` // THE FIX: Allow manual override!
 }
 
 type HMCConfig struct {
@@ -70,7 +87,9 @@ type OCPClientConfig struct {
 	Client        string `yaml:"ocp_client"`
 	ClientCSUM    string `yaml:"client_csum,omitempty"`       
 	Installer     string `yaml:"ocp_installer"`
-	InstallerCSUM string `yaml:"installer_csum,omitempty"`    
+	InstallerCSUM string `yaml:"installer_csum,omitempty"`
+	MirrorClient     string `yaml:"ocp_mirror_client,omitempty"`
+	MirrorClientCSUM string `yaml:"mirror_client_csum,omitempty"`
 	ChecksumURL   string `yaml:"checksum_url,omitempty"`     
 }
 

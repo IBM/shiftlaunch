@@ -41,7 +41,7 @@ func init() {
 func runOcWrapper(cmd *cobra.Command, args []string) error {
 	// 1. Disconnect ShiftLaunch's global graceful shutdown handler.
 	// This allows you to Ctrl+C out of a 'watch' command natively.
-	signal.Ignore(os.Interrupt, syscall.SIGTERM)
+	signal.Reset(os.Interrupt, syscall.SIGTERM)
 
 	// 2. Load basic daemon config to find the workspace
 	daemonCfg, err := config.Load()

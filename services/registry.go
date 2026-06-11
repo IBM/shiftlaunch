@@ -1,0 +1,440 @@
+package services
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+
+	"github.ibm.com/sudeeshjohn/shiftlaunch/localexec"
+	"github.ibm.com/sudeeshjohn/shiftlaunch/logger"
+	"github.ibm.com/sudeeshjohn/shiftlaunch/types"
+	"gopkg.in/yaml.v3"
+)
+
+const registryServiceTemplate = `[Unit]
+Description=Local Container Registry for Disconnected OpenShift
+After=network.target syslog.target
+
+[Service]
+Type=simple
+TimeoutStartSec=5m
+TimeoutStopSec=15s
+ExecStartPre=-/usr/bin/podman rm -f "local-registry"
+
+ExecStart=/usr/bin/podman run --name local-registry -p 5000:5000 \
+                                -v /opt/registry/data:/var/lib/registry:z \
+                                -v /opt/registry/auth:/auth:z \
+                                -e "REGISTRY_AUTH=htpasswd" \
+                                -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+                                -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+                                -v /opt/registry/certs:/certs:z \
+                                -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+                                -e REGISTRY_HTTP_TLS_KEY=/certs/domain.pem \
+                                {{.RegistryImage}}
+
+ExecReload=-/usr/bin/podman stop -t 2 "local-registry"
+ExecReload=-/usr/bin/podman rm -f "local-registry"
+ExecStop=-/usr/bin/podman stop -t 2 "local-registry"
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// RegistryManager handles local container registry setup for disconnected OpenShift deployments
+type RegistryManager struct {
+	cfg          *types.AgentConfig
+	executor     *localexec.LocalClient
+	logger       *logger.Logger
+	stateManager *types.StateManager
+	state        *types.DeploymentState
+	workspaceDir string
+}
+
+// NewRegistryManager creates a new registry manager instance
+func NewRegistryManager(cfg *types.AgentConfig, exec *localexec.LocalClient, log *logger.Logger, stateMgr *types.StateManager, state *types.DeploymentState, workspaceDir string) *RegistryManager {
+	return &RegistryManager{
+		cfg:          cfg,
+		executor:     exec,
+		logger:       log,
+		stateManager: stateMgr,
+		state:        state,
+		workspaceDir: workspaceDir,
+	}
+}
+
+// Setup configures and starts the local container registry with SSL and authentication
+func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error {
+	r.workspaceDir = workspaceDir
+	r.logger.Info("Setting up local container registry for disconnected deployment...")
+	shieldedCtx := context.WithoutCancel(ctx)
+
+	registryHost := r.getRegistryHost()
+	registryURL := fmt.Sprintf("%s:5000", registryHost)
+
+	// 1. Create directory structure
+	r.logger.Debug("Creating registry directories...")
+	if _, err := r.executor.Execute(shieldedCtx, "sudo mkdir -p /opt/registry/{auth,certs,data}"); err != nil {
+		return fmt.Errorf("failed to create registry directories: %w", err)
+	}
+
+	// 2. Generate self-signed SSL certificate (Idempotent for Multi-Tenant)
+	r.logger.Debug("Checking for existing SSL certificates...")
+	if _, err := r.executor.Execute(shieldedCtx, "test -f /opt/registry/certs/domain.crt"); err != nil {
+		r.logger.Debug("Generating all-inclusive multi-SAN SSL certificates...")
+		
+		// Dynamically assemble all possible identity aliases the cluster components will use
+		sanDNS := fmt.Sprintf("DNS:%s", registryHost)
+		sanIP := fmt.Sprintf("IP:%s,IP:127.0.0.1", r.cfg.Controller.IP)
+		
+		// Fallback alias for cluster-scoped routing strings
+		if r.cfg.OpenShift.ClusterName != "" && r.cfg.OpenShift.BaseDomain != "" {
+			clusterFQDN := fmt.Sprintf("registry.%s.%s", r.cfg.OpenShift.ClusterName, r.cfg.OpenShift.BaseDomain)
+			if clusterFQDN != registryHost {
+				sanDNS += fmt.Sprintf(",DNS:%s", clusterFQDN)
+			}
+		}
+
+		certCmd := fmt.Sprintf(`sudo openssl req -newkey rsa:4096 -nodes -sha256 \
+			-keyout /opt/registry/certs/domain.pem \
+			-x509 -days 365 \
+			-out /opt/registry/certs/domain.crt \
+			-subj "/CN=%s" \
+			-addext "basicConstraints=critical,CA:TRUE" \
+			-addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign" \
+			-addext "extendedKeyUsage=serverAuth" \
+			-addext "subjectAltName=%s,%s"`,
+			registryHost, sanDNS, sanIP)
+
+		if _, err := r.executor.Execute(shieldedCtx, certCmd); err != nil {
+			return fmt.Errorf("failed to generate all-inclusive SSL certificate: %w", err)
+		}
+		r.executor.Execute(shieldedCtx, "sudo chmod 644 /opt/registry/certs/domain.pem")
+	} else {
+		r.logger.Info("Existing SSL certificate found. Reusing for multi-cluster support.")
+	}
+
+	// 3. Create or update htpasswd authentication
+	r.logger.Debug("Configuring registry authentication...")
+	username := r.cfg.DisconnectedConfig.RegistryUsername
+	password := r.cfg.DisconnectedConfig.RegistryPassword
+	
+	// THE FIX: Use -c to create only if the file doesn't exist. Otherwise, just append/update!
+	authFlag := "-bBc"
+	if _, err := r.executor.Execute(shieldedCtx, "test -f /opt/registry/auth/htpasswd"); err == nil {
+		authFlag = "-bB"
+	}
+	htpasswdCmd := fmt.Sprintf("sudo htpasswd %s /opt/registry/auth/htpasswd %s %s", authFlag, username, password)
+	if _, err := r.executor.Execute(shieldedCtx, htpasswdCmd); err != nil {
+		return fmt.Errorf("failed to create htpasswd: %w", err)
+	}
+
+	// 4. Trust the certificate system-wide
+	r.logger.Debug("Adding certificate to system trust store...")
+	if _, err := r.executor.Execute(shieldedCtx, "sudo cp /opt/registry/certs/domain.crt /etc/pki/ca-trust/source/anchors/"); err != nil {
+		return fmt.Errorf("failed to copy certificate: %w", err)
+	}
+	if _, err := r.executor.Execute(shieldedCtx, "sudo update-ca-trust"); err != nil {
+		return fmt.Errorf("failed to update ca-trust: %w", err)
+	}
+
+	// =========================================================
+	// THE FIX: Move Firewall Configuration BEFORE starting Podman
+	// =========================================================
+	r.logger.Debug("Configuring firewall for registry...")
+	if _, err := r.executor.Execute(shieldedCtx, "sudo firewall-cmd --permanent --add-port=5000/tcp"); err != nil {
+		return fmt.Errorf("failed to add firewall rule: %w", err)
+	}
+	if _, err := r.executor.Execute(shieldedCtx, "sudo firewall-cmd --reload"); err != nil {
+		return fmt.Errorf("failed to reload firewall: %w", err)
+	}
+
+	// 5 & 6. Start the registry only if it isn't already running
+	r.logger.Debug("Checking if registry is already running...")
+	if _, err := r.executor.Execute(shieldedCtx, "sudo systemctl is-active local-registry"); err == nil {
+		r.logger.Info("Local registry is already active. Reusing existing container.")
+	} else {
+		r.logger.Debug("Starting fresh local registry service...")
+		
+		// THE FIX: Only write the systemd file if we are actually creating the registry!
+		tmpl, err := template.New("registry-service").Parse(registryServiceTemplate)
+		if err == nil {
+			var buf bytes.Buffer
+			_ = tmpl.Execute(&buf, struct{ RegistryImage string }{RegistryImage: r.cfg.DisconnectedConfig.RegistryImage})
+			_ = r.executor.WriteFile(shieldedCtx, "/etc/systemd/system/local-registry.service", buf.Bytes(), 0644)
+		}
+
+		r.executor.Execute(shieldedCtx, "sudo podman rm -f local-registry 2>/dev/null || true")
+		
+		if _, err := r.executor.Execute(shieldedCtx, "sudo systemctl daemon-reload"); err != nil {
+			return fmt.Errorf("failed to reload systemd: %w", err)
+		}
+		if err := r.executor.SystemctlEnable(shieldedCtx, "local-registry"); err != nil {
+			return fmt.Errorf("failed to enable registry service: %w", err)
+		}
+		if err := r.executor.SystemctlRestart(shieldedCtx, "local-registry"); err != nil {
+			return fmt.Errorf("failed to start registry service: %w", err)
+		}
+	}
+
+	// 7. Ensure the Controller can resolve the registry hostname locally
+	r.logger.Debug("Injecting registry hostname into local /etc/hosts for resolution...")
+	hostsEntry := fmt.Sprintf("%s %s", r.cfg.Controller.IP, registryHost)
+	
+	// Clean up any stale entries first, then append
+	r.executor.Execute(shieldedCtx, fmt.Sprintf("sudo sed -i '/%s/d' /etc/hosts", registryHost))
+	r.executor.Execute(shieldedCtx, fmt.Sprintf("echo '%s' | sudo tee -a /etc/hosts > /dev/null", hostsEntry))
+
+	// 8. Wait for registry to be ready
+	r.logger.Debug("Waiting for registry to be ready...")
+	
+	// THE FIX: Explicitly target 127.0.0.1 (IPv4), strip all proxies, and add strict timeouts to prevent network namespace settling delays
+	checkCmd := fmt.Sprintf("env HTTP_PROXY='' HTTPS_PROXY='' http_proxy='' https_proxy='' curl --connect-timeout 5 --max-time 10 -u %s:%s -k https://127.0.0.1:5000/v2/_catalog", username, password)
+	
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		if _, err := r.executor.Execute(shieldedCtx, checkCmd); err == nil {
+			lastErr = nil // THE FIX: Clear the sticky error before breaking!
+			break
+		} else {
+			lastErr = err
+			r.logger.Debug("Registry not ready yet, retrying...", "attempt", i+1)
+			r.executor.Execute(shieldedCtx, "sleep 5")
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("registry failed to start after 10 attempts: %w", lastErr)
+	}
+
+	// 9. Update pull secret with local registry credentials
+	r.logger.Info("Updating pull secret with local registry authentication...")
+	
+	// FIX: Use the actual source file from the config!
+	pullSecretPath := os.ExpandEnv(strings.ReplaceAll(r.cfg.OpenShift.PullSecretFile, "~", "$HOME"))
+	updatedSecretPath := filepath.Join(workspaceDir, "pull-secret-updated.json")
+	
+	/*updateSecretCmd := fmt.Sprintf(`registry_token=$(echo -n "%s:%s" | base64 -w0) && \
+		jq '.auths += {"%s": {"auth": "'$registry_token'","email": "noemail@localhost"}}' \
+		< %s > %s`,
+		username, password, registryURL, pullSecretPath, updatedSecretPath)*/
+	updateSecretCmd := fmt.Sprintf(`registry_token=$(echo -n "%s:%s" | base64 -w0) && \
+	jq -c '.auths += {"%s": {"auth": "'$registry_token'","email": "noemail@localhost"}}' \
+	< %s > %s`,
+	username, password, registryURL, pullSecretPath, updatedSecretPath)
+	if _, err := r.executor.Execute(shieldedCtx, updateSecretCmd); err != nil {
+		return fmt.Errorf("failed to update pull secret: %w", err)
+	}
+
+	// 10. Mirror OpenShift release images (with idempotency to prevent re-runs on resume)
+	if r.cfg.DisconnectedConfig.AutoMirror {
+		mirrorEventID := fmt.Sprintf("mirror_release_%s", r.cfg.OpenShift.Version)
+		
+		// Check if mirroring was already completed
+		if r.state != nil && contains(r.state.CompletedEvents, mirrorEventID) {
+			r.logger.Info("Image mirroring already completed, skipping...")
+		} else {
+			r.logger.Info("Mirroring OpenShift release images (this may take 15-30 minutes)...")
+			if err := r.mirrorImages(shieldedCtx, workspaceDir, registryURL, updatedSecretPath); err != nil {
+				return fmt.Errorf("failed to mirror images: %w", err)
+			}
+			
+			// Mark mirroring as completed
+			if r.state != nil && r.stateManager != nil {
+				r.state.CompletedEvents = append(r.state.CompletedEvents, mirrorEventID)
+				r.stateManager.SaveState(r.state)
+			}
+		}
+	}
+
+	r.logger.Info("Local registry setup complete", "url", fmt.Sprintf("https://%s", registryURL))
+	return nil
+}
+
+// mirrorImages acts as a smart router based on the payload type
+func (r *RegistryManager) mirrorImages(ctx context.Context, workspaceDir, registryURL, pullSecretPath string) error {
+	releaseType := r.cfg.DisconnectedConfig.ReleaseType
+
+	r.logger.Info("Starting image mirror process", "release_type", releaseType, "version", r.cfg.OpenShift.Version)
+
+	if releaseType == "ci" {
+		return r.mirrorViaOcAdm(ctx, workspaceDir, registryURL, pullSecretPath)
+	}
+
+	return r.mirrorViaOcMirrorV2(ctx, workspaceDir, registryURL, pullSecretPath)
+}
+
+// mirrorViaOcAdm blindly copies raw payloads without checking the graph (Best for CI/Nightly/Dev builds)
+func (r *RegistryManager) mirrorViaOcAdm(ctx context.Context, workspaceDir, registryURL, pullSecretPath string) error {
+	ocPath := filepath.Join(workspaceDir, "tools", "oc")
+	releaseImage := r.cfg.DisconnectedConfig.ReleaseImage
+	localRepo := r.cfg.DisconnectedConfig.LocalRepo
+	releaseTag := r.cfg.OpenShift.Version
+
+	mirrorCmd := fmt.Sprintf(`%s adm release mirror -a %s --from=%s --to=%s/%s --to-release-image=%s/%s:%s --insecure=true`,
+		ocPath, pullSecretPath, releaseImage, registryURL, localRepo, registryURL, localRepo, releaseTag)
+
+	r.logger.Debug("Executing oc adm mirror command", "cmd", mirrorCmd)
+	output, err := r.executor.Execute(ctx, mirrorCmd)
+	os.WriteFile(filepath.Join(workspaceDir, "registry-mirror-info.txt"), []byte(output), 0644)
+	if err != nil {
+		return fmt.Errorf("oc adm release mirror failed: %w", err)
+	}
+	return nil
+}
+
+// mirrorViaOcMirrorV2 queries the Cincinnati Graph for official releases and enforces signatures (Best for Production)
+func (r *RegistryManager) mirrorViaOcMirrorV2(ctx context.Context, workspaceDir, registryURL, pullSecretPath string) error {
+	ocMirrorPath := filepath.Join(workspaceDir, "tools", "oc-mirror")
+	version := r.cfg.OpenShift.Version
+	localRepo := r.cfg.DisconnectedConfig.LocalRepo
+	
+	// Extract channel (e.g. "4.21.14" -> "stable-4.21")
+	parts := strings.Split(version, ".")
+	channel := "stable-" + version
+	if len(parts) >= 2 {
+		channel = fmt.Sprintf("stable-%s.%s", parts[0], parts[1])
+	}
+
+	imageSetYaml := fmt.Sprintf(`kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v2alpha1
+mirror:
+  platform:
+    architectures:
+      - "ppc64le"
+    channels:
+    - name: %s
+      type: ocp
+      minVersion: %s
+      maxVersion: %s
+    graph: false
+`, channel, version, version)
+
+	imageSetPath := filepath.Join(workspaceDir, "imageset-config.yaml")
+	os.WriteFile(imageSetPath, []byte(imageSetYaml), 0644)
+
+	// Execute v2 mirror logic
+	mirrorCmd := fmt.Sprintf(`cd %s && unset REGISTRY_AUTH_FILE && %s --v2 --config=imageset-config.yaml --authfile=%s --workspace file://%s/oc-mirror-workspace docker://%s/%s --dest-tls-verify=false`,
+		workspaceDir, ocMirrorPath, pullSecretPath, workspaceDir, registryURL, localRepo)
+
+	r.logger.Debug("Executing oc-mirror v2 command", "cmd", mirrorCmd)
+	output, err := r.executor.Execute(ctx, mirrorCmd)
+	os.WriteFile(filepath.Join(workspaceDir, "registry-mirror-info.txt"), []byte(output), 0644)
+	if err != nil {
+		return fmt.Errorf("oc-mirror v2 failed: %w", err)
+	}
+	return nil
+}
+
+// getRegistryHost returns the hostname or IP address for the registry based on configuration
+func (r *RegistryManager) getRegistryHost() string {
+	// THE FIX: For locally managed shared registries, the IP is the safest multi-tenant
+	// identifier because it is permanently baked into the shared certificate's SAN!
+	if r.cfg.ManagedServices.Registry {
+		return r.cfg.Controller.IP
+	}
+
+	// Fallback for external user-managed registries
+	if r.cfg.DisconnectedConfig.RegistryHostname != "" {
+		return r.cfg.DisconnectedConfig.RegistryHostname
+	}
+	return fmt.Sprintf("registry.%s.%s", r.cfg.OpenShift.ClusterName, r.cfg.OpenShift.BaseDomain)
+}
+
+// GetRegistryURL returns the full registry URL for use in install-config
+func (r *RegistryManager) GetRegistryURL() string {
+	return fmt.Sprintf("%s:5000", r.getRegistryHost())
+}
+
+// GetCertificatePath returns the path to the registry certificate
+func (r *RegistryManager) GetCertificatePath() string {
+	return "/opt/registry/certs/domain.crt"
+}
+
+// Cleanup removes the registry service and configuration ONLY if no other clusters are using it
+func (r *RegistryManager) Cleanup(ctx context.Context) error {
+	// THE FIX: Check for multi-tenancy before nuking the registry!
+	if r.isRegistryShared() {
+		r.logger.Info("Local registry is actively being used by other managed clusters. Bypassing registry teardown.")
+		return nil
+	}
+
+	r.logger.Info("Cleaning up local registry...")
+	shieldedCtx := context.WithoutCancel(ctx)
+
+	// Stop and disable service
+	r.executor.Execute(shieldedCtx, "sudo systemctl stop local-registry")
+	r.executor.Execute(shieldedCtx, "sudo systemctl disable local-registry")
+
+	// Remove firewall rule
+	r.executor.Execute(shieldedCtx, "sudo firewall-cmd --permanent --remove-port=5000/tcp")
+	r.executor.Execute(shieldedCtx, "sudo firewall-cmd --reload")
+
+	// Remove certificate from trust store
+	r.executor.Execute(shieldedCtx, "sudo rm -f /etc/pki/ca-trust/source/anchors/domain.crt")
+	r.executor.Execute(shieldedCtx, "sudo update-ca-trust")
+
+	r.logger.Info("Registry cleanup complete")
+	return nil
+}
+
+// isRegistryShared checks if other managed clusters are currently using the local registry
+func (r *RegistryManager) isRegistryShared() bool {
+	// THE FIX: Use the dynamic workspace directory instead of hardcoding /opt/shiftlaunch
+	workspaceParent := filepath.Dir(r.workspaceDir)
+	
+	entries, err := os.ReadDir(workspaceParent)
+	if err != nil {
+		return false
+	}
+
+	activeCount := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		
+		clusterName := entry.Name()
+		if clusterName == r.cfg.OpenShift.ClusterName {
+			continue // Skip our own cluster
+		}
+
+		// A cluster is active if it has a config file and is NOT marked as deleted
+		deletedMarker := filepath.Join(workspaceParent, clusterName, ".deleted")
+		if _, err := os.Stat(deletedMarker); err == nil {
+			continue
+		}
+
+		configPath := filepath.Join(workspaceParent, clusterName, "config.yaml")
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			continue
+		}
+
+		// Parse the config to see if it relies on the managed registry
+		var tmpCfg types.AgentConfig
+		if err := yaml.Unmarshal(data, &tmpCfg); err == nil {
+			// THE FIX: Look exclusively at the Registry service toggle to prevent
+			// unoptimized config files from being skipped!
+			if tmpCfg.ManagedServices.Registry {
+				activeCount++
+			}
+		}
+	}
+
+	return activeCount > 0
+}
+
+// Helper function to check if a string exists in a slice
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}

@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -247,31 +248,33 @@ func (h *HMCProvider) DiscoverMetadata(ctx context.Context) error {
 	return nil
 }
 
-// BootNode routes to the appropriate boot method (netboot or ISO)
+// BootNode routes to the appropriate boot method (netboot or Agent ISO)
 func (h *HMCProvider) BootNode(ctx context.Context, node *types.NodeConfig) error {
 	// Route based on boot method
-	if h.cfg.Nodes.BootMethod == "iso" {
+	if h.cfg.Nodes.BootMethod == "agent" {
 		return h.bootNodeWithISO(ctx, node)
 	}
 
 	// Default to netboot
 	return h.networkBootLpar(ctx, node)
 }
-// BootNodes determines the boot strategy and executes it across the topology
+// BootNodes boots all nodes using the configured boot method
 func (h *HMCProvider) BootNodes(ctx context.Context) error {
-	if h.cfg.Nodes.BootMethod == "iso" {
+	if h.cfg.Nodes.BootMethod == "agent" {
 		return h.bootNodesWithISOBulk(ctx)
 	}
 
-	// Netboot Fallback (PARALLELIZED)
+	// Default to netboot - boot all nodes in parallel
 	h.logger.Info("Initiating parallel network boot sequence...")
+	
 	state, _ := h.stateManager.LoadState()
+	allNodes := h.cfg.GetAllNodes()
 	
 	var wg sync.WaitGroup
-	var stateMu sync.Mutex // Mutex to prevent concurrent state file corruption
-	errCh := make(chan error, len(h.cfg.GetAllNodes()))
+	var stateMu sync.Mutex
+	errCh := make(chan error, len(allNodes))
 
-	for _, n := range h.cfg.GetAllNodes() {
+	for _, n := range allNodes {
 		node := n // Prevent loop variable capture bug
 
 		bootMarker := "booted_" + node.Hostname
@@ -284,13 +287,11 @@ func (h *HMCProvider) BootNodes(ctx context.Context) error {
 		go func(targetNode *types.NodeConfig) {
 			defer wg.Done()
 			
-			// Execute the heavily I/O bound 45-second sequence asynchronously
 			if err := h.networkBootLpar(ctx, targetNode); err != nil {
 				errCh <- fmt.Errorf("HMC boot sequence failed for %s: %w", targetNode.Hostname, err)
 				return
 			}
 
-			// Safely lock, update, and save the state file
 			if state != nil {
 				stateMu.Lock()
 				state.CompletedPhases = append(state.CompletedPhases, bootMarker)
@@ -300,11 +301,9 @@ func (h *HMCProvider) BootNodes(ctx context.Context) error {
 		}(node)
 	}
 
-	// Wait for all nodes to finish their 45-second boot sequences
 	wg.Wait()
 	close(errCh)
 
-	// Aggregate any errors that occurred in the goroutines
 	var errs []string
 	for err := range errCh {
 		errs = append(errs, err.Error())
@@ -314,7 +313,6 @@ func (h *HMCProvider) BootNodes(ctx context.Context) error {
 		return fmt.Errorf("parallel boot encountered errors: %s", strings.Join(errs, "; "))
 	}
 
-	h.logger.Info("All nodes successfully network booted!")
 	return nil
 }
 
@@ -755,7 +753,12 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	// ========================================================================
 	// STEP 6: MOUNT NFS IF NOT ALREADY MOUNTED (SHARED MOUNT PER VIOS)
 	// ========================================================================
+	// THE FIX: Dynamically discover the Management IP that can route to the VIOS
 	nfsServer := h.cfg.Controller.IP
+	if conn, err := net.Dial("udp", h.cfg.HMC.IP+":443"); err == nil {
+		nfsServer = conn.LocalAddr().(*net.UDPAddr).IP.String()
+		conn.Close()
+	}
 	exportPath := fmt.Sprintf("/opt/shiftlaunch/clusters/%s/install-dir", h.cfg.OpenShift.ClusterName)
 
 	// Check if we've already mounted NFS for this VIOS
@@ -1231,7 +1234,12 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 
 		// Ensure NFS is Mounted on VIOS
 		if !h.viosMounted[viosUUID] {
+			// THE FIX: Dynamically discover the Management IP that can route to the VIOS
 			nfsServer := h.cfg.Controller.IP
+			if conn, err := net.Dial("udp", h.cfg.HMC.IP+":443"); err == nil {
+				nfsServer = conn.LocalAddr().(*net.UDPAddr).IP.String()
+				conn.Close()
+			}
 			exportPath := fmt.Sprintf("/opt/shiftlaunch/clusters/%s/install-dir", h.cfg.OpenShift.ClusterName)
 
 			h.logger.Info("Creating mount directory on VIOS", "path", mountPoint)

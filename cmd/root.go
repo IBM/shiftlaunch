@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/pterm/pterm"
@@ -163,15 +164,102 @@ func loadConfig(requireConfig bool) (*types.AgentConfig, *config.AgentDaemonConf
 		return nil, nil, nil, fmt.Errorf("failed to parse YAML configuration: %w", err)
 	}
 
-	// Auto-discover Controller IP
-	if cfg.Controller.NetworkInterface != "" {
-		ip, err := controller.GetInterfaceIPv4(cfg.Controller.NetworkInterface)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to auto-discover Controller IP on interface %s: %w", cfg.Controller.NetworkInterface, err)
+	// ========================================================================
+	// STRICT AIRGAP ENFORCEMENT
+	// If the user disabled the proxy, actively sanitize the Go runtime environment
+	// to prevent terminal ghost variables from breaking child processes.
+	// ========================================================================
+	if !cfg.ManagedServices.Proxy {
+		proxyVars := []string{
+			"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+			"ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy",
 		}
-		cfg.Controller.IP = ip
-	} else {
-		return nil, nil, nil, fmt.Errorf("controller.network_interface must be specified in the configuration file")
+		for _, envVar := range proxyVars {
+			os.Unsetenv(envVar)
+		}
+	}
+	// ========================================================================
+
+	// ========================================================================
+	// UX OPTIMIZATION: Auto-fill Disconnected settings if empty
+	// ========================================================================
+	if cfg.ManagedServices.Registry {
+		cfg.DisconnectedConfig.Enabled = true
+		cfg.DisconnectedConfig.AutoMirror = true // Force mirror if managing registry
+		
+		if cfg.DisconnectedConfig.RegistryImage == "" {
+			cfg.DisconnectedConfig.RegistryImage = "docker.io/library/registry:3.1.1"
+		}
+		if cfg.DisconnectedConfig.RegistryUsername == "" {
+			cfg.DisconnectedConfig.RegistryUsername = "admin"
+		}
+		if cfg.DisconnectedConfig.RegistryPassword == "" {
+			cfg.DisconnectedConfig.RegistryPassword = "admin"
+		}
+		if cfg.DisconnectedConfig.LocalRepo == "" {
+			cfg.DisconnectedConfig.LocalRepo = "ocp4/openshift4"
+		}
+		// Default to official releases (uses oc-mirror v2)
+		if cfg.DisconnectedConfig.ReleaseType == "" {
+			cfg.DisconnectedConfig.ReleaseType = "official"
+		}
+		
+		// Auto-generate the release_image based purely on the openshift.version field
+		if cfg.DisconnectedConfig.ReleaseImage == "" && cfg.OpenShift.Version != "" {
+			versionTag := cfg.OpenShift.Version
+			// If they only put "4.21", default to "4.21.0". If they put "4.21.14", use it directly.
+			if len(strings.Split(versionTag, ".")) == 2 {
+				versionTag = versionTag + ".0"
+			}
+			cfg.DisconnectedConfig.ReleaseImage = fmt.Sprintf("quay.io/openshift-release-dev/ocp-release:%s-ppc64le", versionTag)
+		}
+	}
+	// ========================================================================
+
+	// ========================================================================
+	// UX OPTIMIZATION 2: Auto-fill OpenShift mirror URLs if left empty!
+	// ========================================================================
+	if cfg.OpenShift.Version != "" {
+		// Extract major.minor (e.g. "4.21" from "4.21.14") for RHCOS paths
+		majorMinor := cfg.OpenShift.Version
+		if parts := strings.Split(cfg.OpenShift.Version, "."); len(parts) >= 2 {
+			majorMinor = parts[0] + "." + parts[1]
+		}
+
+		// Auto-fill Client and Installer tarballs
+		if cfg.OpenShift.OCPClientConfig.Client == "" {
+			cfg.OpenShift.OCPClientConfig.Client = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/openshift-client-linux.tar.gz", cfg.OpenShift.Version)
+		}
+		if cfg.OpenShift.OCPClientConfig.Installer == "" {
+			cfg.OpenShift.OCPClientConfig.Installer = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/openshift-install-linux.tar.gz", cfg.OpenShift.Version)
+		}
+		
+		// Auto-fill RHCOS URLs (Only needed for Netboot, but safe to generate)
+		if cfg.Nodes.BootMethod != "agent" {
+			if cfg.OpenShift.RHCOSImages.KernelURL == "" {
+				cfg.OpenShift.RHCOSImages.KernelURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-kernel-ppc64le", majorMinor)
+			}
+			if cfg.OpenShift.RHCOSImages.InitramfsURL == "" {
+				cfg.OpenShift.RHCOSImages.InitramfsURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-initramfs.ppc64le.img", majorMinor)
+			}
+			if cfg.OpenShift.RHCOSImages.RootfsURL == "" {
+				cfg.OpenShift.RHCOSImages.RootfsURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-rootfs.ppc64le.img", majorMinor)
+			}
+		}
+	}
+	// ========================================================================
+
+	// Auto-discover Controller IP ONLY if not explicitly provided in YAML
+	if cfg.Controller.IP == "" {
+		if cfg.Controller.NetworkInterface != "" {
+			ip, err := controller.GetInterfaceIPv4(cfg.Controller.NetworkInterface)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to auto-discover Controller IP on interface %s: %w", cfg.Controller.NetworkInterface, err)
+			}
+			cfg.Controller.IP = ip
+		} else {
+			return nil, nil, nil, fmt.Errorf("controller.network_interface must be specified in the configuration file")
+		}
 	}
 
 	// Override cluster name if provided via flag

@@ -28,15 +28,11 @@ defaults
     timeout server          1h
 
 # API Server (Port 6443)
-frontend {{.ClusterName}}-openshift-api-server
+listen {{.ClusterName}}-openshift-api-server
     bind {{.VIP}}:6443
-    default_backend {{.ClusterName}}-openshift-api-server
     mode tcp
     option tcplog
-
-backend {{.ClusterName}}-openshift-api-server
-    balance source
-    mode tcp
+    balance roundrobin
 {{- if .IsSNO}}
     server {{.SNONode.Hostname}} {{.SNONode.IP}}:6443 check
 {{- else}}
@@ -53,15 +49,11 @@ backend {{.ClusterName}}-openshift-api-server
 {{- end}}
 
 # Machine Config Server (Port 22623)
-frontend {{.ClusterName}}-machine-config-server
+listen {{.ClusterName}}-machine-config-server
     bind {{.VIP}}:22623
-    default_backend {{.ClusterName}}-machine-config-server
     mode tcp
     option tcplog
-
-backend {{.ClusterName}}-machine-config-server
-    balance source
-    mode tcp
+    balance roundrobin
 {{- if .IsSNO}}
     server {{.SNONode.Hostname}} {{.SNONode.IP}}:22623 check
 {{- else}}
@@ -78,15 +70,11 @@ backend {{.ClusterName}}-machine-config-server
 {{- end}}
 
 # Ingress HTTP (Port 80)
-frontend {{.ClusterName}}-ingress-http
+listen {{.ClusterName}}-ingress-http
     bind {{.VIP}}:80
-    default_backend {{.ClusterName}}-ingress-http
     mode tcp
     option tcplog
-
-backend {{.ClusterName}}-ingress-http
-    balance source
-    mode tcp
+    balance roundrobin
 {{- if .IsSNO}}
     server {{.SNONode.Hostname}}-http {{.SNONode.IP}}:80 check
 {{- else}}
@@ -102,15 +90,11 @@ backend {{.ClusterName}}-ingress-http
 {{- end}}
 
 # Ingress HTTPS (Port 443)
-frontend {{.ClusterName}}-ingress-https
+listen {{.ClusterName}}-ingress-https
     bind {{.VIP}}:443
-    default_backend {{.ClusterName}}-ingress-https
     mode tcp
     option tcplog
-
-backend {{.ClusterName}}-ingress-https
-    balance source
-    mode tcp
+    balance roundrobin
 {{- if .IsSNO}}
     server {{.SNONode.Hostname}}-https {{.SNONode.IP}}:443 check
 {{- else}}
@@ -186,7 +170,7 @@ func (h *HAProxyGenerator) Generate() (string, error) {
 		VIP:         cfg.Network.LoadBalancerIP,
 		Timestamp:   time.Now().Format(time.RFC3339),
 		IsSNO:       cfg.IsSNO(),
-		IsISO:       cfg.Nodes.BootMethod == "iso",
+		IsISO:       cfg.Nodes.BootMethod == "agent",
 		SNONode:     snoNode,
 	}
 
@@ -229,6 +213,9 @@ func SetupHAProxy(ctx context.Context,cfg *types.AgentConfig, exec *localexec.Lo
 	
 	// NEW: Ensure the HAProxy conf.d directory actually exists before moving files
 	exec.Execute(ctx,"sudo mkdir -p /etc/haproxy/conf.d")
+	
+	// THE FIX: Nuke the default boilerplate frontend/backends that hog port 5000
+	exec.Execute(ctx, "sudo sed -i '/frontend main/,$d' /etc/haproxy/haproxy.cfg")
 	
 	// Write HAProxy configuration locally
 	if err := exec.WriteFile(ctx, configPath, []byte(configContent), 0644); err != nil {

@@ -10,6 +10,8 @@ managed_services:
   pxe: true            # Setup local TFTP (Boot files for Netboot)
   load_balancer: true  # Setup local HAProxy (Routes traffic for loadbalancer_ip)
   nfs: false            # Setup local NFS server for ISO hosting
+  local_registry: true  # Triggers Podman/auth/cert generation
+  proxy: true           # Triggers Squid installation
 
 # --- 2. CONTROLLER (The "Where") ---
 controller:
@@ -66,7 +68,7 @@ openshift:
 
 # --- 6. NODE TARGETS (HMC / BYOI) ---
 nodes:
-  boot_method: "netboot"        # boot_method can be either netboot or iso
+  boot_method: "netboot"        # boot_method can be either netboot or agent
   
   # -------------------------------------------------------------------------
   # SINGLE-NODE OPENSHIFT (SNO) EXAMPLE

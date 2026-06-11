@@ -19,6 +19,7 @@ type ControllerSetup struct {
 	logger    *logger.Logger
 }
 
+// NewControllerSetup creates a new controller setup manager for package and firewall management
 func NewControllerSetup(cfg *types.AgentConfig, daemonCfg *config.AgentDaemonConfig, executor *localexec.LocalClient, log *logger.Logger) *ControllerSetup {
 	return &ControllerSetup{
 		cfg:       cfg,
@@ -35,13 +36,23 @@ func (c *ControllerSetup) getRequiredPackages() []string {
 	// We always need firewalld for port management
 	pkgs = append(pkgs, "firewalld", "policycoreutils-python-utils", "tar")
 
+	// THE FIX: Inject registry dependencies for disconnected deployments!
+	if c.cfg.DisconnectedConfig.Enabled && c.cfg.ManagedServices.Registry {
+		pkgs = append(pkgs, "podman", "httpd-tools", "jq", "openssl")
+	}
+
+	// Centralize Squid installation here for consistency
+	if c.cfg.ManagedServices.Proxy {
+		pkgs = append(pkgs, "squid")
+	}
+
 	// HTTPD is only needed for netboot staging
-	if c.cfg.Nodes.BootMethod != "iso" {
+	if c.cfg.Nodes.BootMethod != "agent" {
 		pkgs = append(pkgs, "httpd")
 	}
 
-	needsDHCP := c.cfg.ManagedServices.DHCP && c.cfg.Nodes.BootMethod != "iso"
-	needsPXE := c.cfg.ManagedServices.PXE && c.cfg.Nodes.BootMethod != "iso"
+	needsDHCP := c.cfg.ManagedServices.DHCP && c.cfg.Nodes.BootMethod != "agent"
+	needsPXE := c.cfg.ManagedServices.PXE && c.cfg.Nodes.BootMethod != "agent"
 
 	if c.cfg.ManagedServices.DNS || needsDHCP || needsPXE {
 		pkgs = append(pkgs, "dnsmasq")
@@ -52,11 +63,11 @@ func (c *ControllerSetup) getRequiredPackages() []string {
 	if c.cfg.ManagedServices.LoadBalancer {
 		pkgs = append(pkgs, "haproxy")
 	}
-	if c.cfg.Nodes.BootMethod == "iso" && c.cfg.ManagedServices.NFS {
+	if c.cfg.Nodes.BootMethod == "agent" && c.cfg.ManagedServices.NFS {
 		pkgs = append(pkgs, "nfs-utils")
 	}
 	// nmstate is required for Agent ISO with static networking validation
-	if c.cfg.Nodes.BootMethod == "iso" {
+	if c.cfg.Nodes.BootMethod == "agent" {
 		pkgs = append(pkgs, "nmstate")
 	}
 
@@ -93,23 +104,23 @@ func (c *ControllerSetup) ConfigureFirewall(ctx context.Context) error {
 	var services []string
 	
 	// HTTP for Ignition is only needed for netboot
-	if c.cfg.Nodes.BootMethod != "iso" {
+	if c.cfg.Nodes.BootMethod != "agent" {
 		ports = append(ports, fmt.Sprintf("%d/tcp", c.daemonCfg.Network.HTTPPort))
 	}
 
 	if c.cfg.ManagedServices.DNS {
 		ports = append(ports, "53/tcp", "53/udp")
 	}
-	if c.cfg.ManagedServices.DHCP && c.cfg.Nodes.BootMethod != "iso" {
+	if c.cfg.ManagedServices.DHCP && c.cfg.Nodes.BootMethod != "agent" {
 		ports = append(ports, "67/udp")
 	}
-	if c.cfg.ManagedServices.PXE && c.cfg.Nodes.BootMethod != "iso" {
+	if c.cfg.ManagedServices.PXE && c.cfg.Nodes.BootMethod != "agent" {
 		ports = append(ports, "69/udp")
 	}
 	if c.cfg.ManagedServices.LoadBalancer {
 		ports = append(ports, "6443/tcp", "22623/tcp", "80/tcp", "443/tcp")
 	}
-	if c.cfg.Nodes.BootMethod == "iso" && c.cfg.ManagedServices.NFS {
+	if c.cfg.Nodes.BootMethod == "agent" && c.cfg.ManagedServices.NFS {
 		services = append(services, "nfs", "rpc-bind", "mountd")
 	}
 

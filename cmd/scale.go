@@ -201,7 +201,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 	log.Debug(fmt.Sprintf("Detected %d worker(s) scaling up. %d require ISO/booting, %d require monitoring.", len(scaleTargets), len(pendingBoot), len(scaleTargets)-len(pendingBoot)))
 
 	// =========================================================================
-	// EXECUTE ISO GENERATION & BOOT (ONLY IF NODES NEED IT)
+	// EXECUTE AGENT ISO GENERATION & BOOT (ONLY IF NODES NEED IT)
 	// =========================================================================
 	if len(pendingBoot) > 0 {
 		// 4. Connect to HMC and discover metadata
@@ -356,7 +356,16 @@ func runScale(cmd *cobra.Command, args []string) error {
 		}
 
 		log.StartPhase("Invoking native OpenShift CLI to compile specialized node installer ISO...")
+		
+		// THE FIX: Use the updated pull secret for Day-2 ISO compilation so it can authenticate to the local registry!
 		pullSecretPath := cfg.OpenShift.PullSecretFile
+		if updatedCfg.DisconnectedConfig.Enabled && updatedCfg.ManagedServices.Registry {
+			updatedSecretPath := filepath.Join(workspaceDir, "pull-secret-updated.json")
+			if _, err := os.Stat(updatedSecretPath); err == nil {
+				pullSecretPath = updatedSecretPath
+				log.Debug("Airgap mode detected: Using updated pull secret for local registry authentication")
+			}
+		}
 
 		isoCmd := exec.CommandContext(ctx, ocPath, "adm", "node-image", "create", "--dir", installDir, "--registry-config", pullSecretPath)
 		isoCmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)

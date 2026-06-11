@@ -55,8 +55,40 @@ bootstrapInPlace:
 {{- else}}
 fips: false
 {{- end}}
+{{- if .UseLocalRegistry}}
+pullSecret: '{{.PullSecretUpdated}}'
+{{- if .RegistryCert}}
+additionalTrustBundle: |
+{{.RegistryCert}}
+{{- end}}
+imageDigestSources:
+{{- if eq .ReleaseType "ci"}}
+- mirrors:
+  - {{.LocalRegistry}}/{{.LocalRepo}}
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - {{.LocalRegistry}}/{{.LocalRepo}}
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+{{- else}}
+- mirrors:
+  - {{.LocalRegistry}}/{{.LocalRepo}}/openshift/release-images
+  - {{.LocalRegistry}}/{{.LocalRepo}}
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - {{.LocalRegistry}}/{{.LocalRepo}}/openshift/release
+  - {{.LocalRegistry}}/{{.LocalRepo}}
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+{{- end}}
+{{- else}}
 pullSecret: '{{.PullSecret}}'
+{{- end}}
 sshKey: '{{.SSHKey}}'
+{{- if .UseProxy}}
+proxy:
+  httpProxy: {{.ProxyURL}}
+  httpsProxy: {{.ProxyURL}}
+  noProxy: .{{.ClusterName}}.{{.BaseDomain}},{{.NoProxy}}
+{{- end}}
 `
 
 // agentConfigTemplate works for both SNO and multi-node clusters
@@ -79,11 +111,15 @@ hosts:
         - name: env2
           type: ethernet
           state: up
+          mtu: 1450
           ipv4:
             enabled: true
+            dhcp: false
             address:
               - ip: {{.IP}}
                 prefix-length: {{.PrefixLength}}
+          ipv6:
+            enabled: false
       dns-resolver:
         config:
           server:
@@ -93,13 +129,15 @@ hosts:
           - destination: 0.0.0.0/0
             next-hop-address: {{.Gateway}}
             next-hop-interface: env2
+            table-id: 254
 {{- end}}
 {{- end}}
 `
 
+// GenerateIgnition creates OpenShift ignition configs and installation artifacts for cluster bootstrap
 func GenerateIgnition(ctx context.Context, cfg *types.AgentConfig, exec *localexec.LocalClient, workspaceDir string) error {
 	// Branch based on boot method
-	if cfg.Nodes.BootMethod == "iso" {
+	if cfg.Nodes.BootMethod == "agent" {
 		return generateAgentISO(ctx, cfg, exec, workspaceDir)
 	}
 
@@ -109,70 +147,71 @@ func GenerateIgnition(ctx context.Context, cfg *types.AgentConfig, exec *localex
 
 // generateNetbootIgnition handles traditional netboot ignition generation
 func generateNetbootIgnition(ctx context.Context, cfg *types.AgentConfig, exec *localexec.LocalClient, workspaceDir string) error {
-	// --- NEW: Define and create the install-dir target directory ---
 	targetDir := filepath.Join(workspaceDir, "install-dir")
-	exec.Execute(ctx,fmt.Sprintf("mkdir -p %s", targetDir))
+	exec.Execute(ctx, fmt.Sprintf("mkdir -p %s", targetDir))
 
 	// 1. Generate install-config.yaml
-	installConfig, err := generateInstallConfigYAML(cfg)
+	installConfig, err := generateInstallConfigYAML(cfg, workspaceDir)
 	if err != nil {
 		return err
 	}
 
-	// Write to the new install-dir directory
 	configPath := filepath.Join(targetDir, "install-config.yaml")
 	if err := os.WriteFile(configPath, []byte(installConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write install-config.yaml: %w", err)
 	}
 
-	// Backup the config because openshift-install consumes it
-	exec.Execute(ctx,fmt.Sprintf("cp %s %s.bak", configPath, configPath))
-
-	// 2. Run openshift-install locally
-	// Note: The installer binary is still in the parent workspace's tools directory
+	exec.Execute(ctx, fmt.Sprintf("cp %s %s.bak", configPath, configPath))
 	installerPath := filepath.Join(workspaceDir, "tools", "openshift-install")
 
+	// 2. Generate manifests first so we can inject custom MachineConfigs
+	manifestsCmd := fmt.Sprintf("cd %s && %s create manifests --dir=.", targetDir, installerPath)
+	if _, err := exec.Execute(ctx, manifestsCmd); err != nil {
+		return fmt.Errorf("failed to create manifests: %w", err)
+	}
+
+	// 3. Inject Insecure Policy to bypass Signature Validation ONLY for CI/Nightly builds
+	if cfg.DisconnectedConfig.Enabled && cfg.DisconnectedConfig.ReleaseType == "ci" {
+		if err := injectInsecurePolicy(targetDir); err != nil {
+			return fmt.Errorf("failed to inject insecure policy: %w", err)
+		}
+	}
+
+	// 4. Create Ignition Configs
 	var cmd string
 	if cfg.IsSNO() {
-		// cd into targetDir before running the installer
 		cmd = fmt.Sprintf("cd %s && %s create single-node-ignition-config --dir=.", targetDir, installerPath)
 	} else {
-		// cd into targetDir before running the installer
 		cmd = fmt.Sprintf("cd %s && %s create ignition-configs --dir=.", targetDir, installerPath)
 	}
 
-	if _, err := exec.Execute(ctx,cmd); err != nil {
+	if _, err := exec.Execute(ctx, cmd); err != nil {
 		return fmt.Errorf("failed to create ignition configs: %w", err)
 	}
-
-/* 	// 3. Stage files for HTTP hosting
-	httpDir := filepath.Join(workspaceDir, "http")
-	exec.Execute(fmt.Sprintf("mkdir -p %s/ignition", httpDir))
-	exec.Execute(fmt.Sprintf("cp -r %s/rhcos %s/", workspaceDir, httpDir))
-
-	if cfg.IsSNO() {
-		// Copy from targetDir
-		exec.Execute(fmt.Sprintf("cp %s/bootstrap-in-place-for-live-iso.ign %s/ignition/bootstrap.ign", targetDir, httpDir))
-	} else {
-		// Copy from targetDir
-		exec.Execute(fmt.Sprintf("cp %s/*.ign %s/ignition/", targetDir, httpDir))
-	} */
-
 
 	return nil
 }
 
-func generateInstallConfigYAML(cfg *types.AgentConfig) (string, error) {
+func generateInstallConfigYAML(cfg *types.AgentConfig, workspaceDir string) (string, error) {
 	tmpl, err := template.New("installConfig").Parse(installConfigTemplate)
 	if err != nil {
 		return "", err
 	}
 
-	pullSecret, _ := os.ReadFile(cfg.OpenShift.PullSecretFile)
+	// Read pull secret and SSH key
+	pullSecretPath := cfg.OpenShift.PullSecretFile
+	pullSecret, _ := os.ReadFile(pullSecretPath)
 	sshKey, _ := os.ReadFile(os.ExpandEnv(strings.ReplaceAll(cfg.OpenShift.SSHPublicKeyFile, "~", "$HOME")))
 
+	// --- FIX: Dynamic Worker Replica Assignment based on Boot Method ---
+	workerReplicas := 0
+	if cfg.Nodes.BootMethod == "agent" {
+		workerReplicas = len(cfg.Nodes.Workers)
+	}
+
+	// Prepare data structure for template
 	data := struct {
-		BaseDomain               string
+		BaseDomain            string
 		WorkerReplicas           int
 		MasterReplicas           int
 		ClusterName              string
@@ -183,10 +222,19 @@ func generateInstallConfigYAML(cfg *types.AgentConfig) (string, error) {
 		IsSNO                    bool
 		DiskDevice               string
 		PullSecret               string
+		PullSecretUpdated        string
 		SSHKey                   string
+		UseLocalRegistry         bool
+		LocalRegistry            string
+		LocalRepo                string
+		RegistryCert             string
+		ReleaseType              string
+		UseProxy                 bool
+		ProxyURL                 string
+		NoProxy                  string
 	}{
 		BaseDomain:               cfg.OpenShift.BaseDomain,
-		WorkerReplicas:           len(cfg.Nodes.Workers),
+		WorkerReplicas:           workerReplicas, // <--- Map the dynamic calculation variable here
 		MasterReplicas:           len(cfg.Nodes.Masters),
 		ClusterName:              cfg.OpenShift.ClusterName,
 		ClusterNetworkCIDR:       cfg.OpenShift.ClusterNetworkCIDR,
@@ -194,9 +242,78 @@ func generateInstallConfigYAML(cfg *types.AgentConfig) (string, error) {
 		ServiceNetwork:           cfg.OpenShift.ServiceNetwork,
 		MachineNetwork:           cfg.Network.MachineCIDR,
 		IsSNO:                    cfg.IsSNO(),
-		DiskDevice:               "/dev/sda", // Default disk device for SNO
+		DiskDevice:               "/dev/sda",
 		PullSecret:               strings.TrimSpace(string(pullSecret)),
 		SSHKey:                   strings.TrimSpace(string(sshKey)),
+		UseLocalRegistry:         cfg.DisconnectedConfig.Enabled,
+		ReleaseType:              cfg.DisconnectedConfig.ReleaseType,
+		UseProxy:                 cfg.ManagedServices.Proxy,
+	}
+
+	// Add disconnected registry configuration if enabled
+	if data.UseLocalRegistry {
+		registryHostname := cfg.DisconnectedConfig.RegistryHostname
+		if cfg.ManagedServices.Registry {
+			registryHostname = cfg.Controller.IP
+		} else if registryHostname == "" {
+			registryHostname = fmt.Sprintf("registry.%s.%s", cfg.OpenShift.ClusterName, cfg.OpenShift.BaseDomain)
+		}
+
+		data.LocalRegistry = fmt.Sprintf("%s:5000", registryHostname)
+		if !cfg.ManagedServices.Registry && strings.Contains(registryHostname, ":") {
+			data.LocalRegistry = registryHostname
+		}
+
+		data.LocalRepo = cfg.DisconnectedConfig.LocalRepo
+
+		if cfg.ManagedServices.Registry {
+			updatedSecretPath := filepath.Join(workspaceDir, "pull-secret-updated.json")
+			if updatedSecret, err := os.ReadFile(updatedSecretPath); err == nil {
+				data.PullSecretUpdated = strings.TrimSpace(string(updatedSecret))
+			} else {
+				data.PullSecretUpdated = data.PullSecret
+			}
+
+			certPath := "/opt/registry/certs/domain.crt"
+			if certData, err := os.ReadFile(certPath); err == nil {
+				lines := strings.Split(string(certData), "\n")
+				var indented []string
+				for _, line := range lines {
+					if line != "" {
+						indented = append(indented, "  "+line)
+					}
+				}
+				data.RegistryCert = strings.Join(indented, "\n")
+			}
+		} else {
+			data.PullSecretUpdated = data.PullSecret
+
+			if cfg.DisconnectedConfig.RegistryCAFile != "" {
+				caPath := os.ExpandEnv(strings.ReplaceAll(cfg.DisconnectedConfig.RegistryCAFile, "~", "$HOME"))
+				certData, err := os.ReadFile(caPath)
+				if err != nil {
+					return "", fmt.Errorf("failed to read external registry CA file at '%s': %w", caPath, err)
+				}
+
+				lines := strings.Split(strings.TrimSpace(string(certData)), "\n")
+				var indented []string
+				for _, line := range lines {
+					indented = append(indented, "  "+line)
+				}
+				data.RegistryCert = strings.Join(indented, "\n")
+			}
+		}
+	}
+
+	// Add proxy configuration if enabled
+	if data.UseProxy {
+		data.ProxyURL = fmt.Sprintf("http://%s:3128", cfg.Controller.IP)
+		// THE FIX: Add the specific wildcards to ensure the nodes never route internal cluster lookups through Squid
+		data.NoProxy = fmt.Sprintf("127.0.0.1,localhost,%s,%s,.%s,%s",
+			cfg.Network.MachineCIDR,
+			cfg.Controller.IP,
+			cfg.OpenShift.BaseDomain,
+			cfg.Network.LoadBalancerIP)
 	}
 
 	var buf bytes.Buffer
@@ -205,13 +322,13 @@ func generateInstallConfigYAML(cfg *types.AgentConfig) (string, error) {
 	}
 	return buf.String(), nil
 }
-// generateAgentISO creates an Agent-based Installer ISO for both SNO and multi-node clusters
+// generateAgentImage creates an Agent-based Installer image for both SNO and multi-node clusters
 func generateAgentISO(ctx context.Context, cfg *types.AgentConfig, exec *localexec.LocalClient, workspaceDir string) error {
 	targetDir := filepath.Join(workspaceDir, "install-dir")
 	exec.Execute(ctx, fmt.Sprintf("mkdir -p %s", targetDir))
 
 	// 1. Generate install-config.yaml
-	installConfig, err := generateInstallConfigYAML(cfg)
+	installConfig, err := generateInstallConfigYAML(cfg, workspaceDir)
 	if err != nil {
 		return err
 	}
@@ -230,20 +347,42 @@ func generateAgentISO(ctx context.Context, cfg *types.AgentConfig, exec *localex
 	}
 
 	agentConfigPath := filepath.Join(targetDir, "agent-config.yaml")
-	
 	if err := os.WriteFile(agentConfigPath, []byte(agentConfig), 0644); err != nil {
 		return fmt.Errorf("failed to write agent-config.yaml: %w", err)
 	}
-
-	// Backup agent-config.yaml because openshift-install consumes it
 	exec.Execute(ctx, fmt.Sprintf("cp %s %s.bak", agentConfigPath, agentConfigPath))
+
+	// ========================================================================
+	// PRODUCTION DISCONNECTED INJECTION (The Secret Sauce)
+	// Copy the IDMS and Signature ConfigMaps generated by oc-mirror into 
+	// the installer's manifest directory so they are baked into the ISO.
+	// ========================================================================
+	if cfg.DisconnectedConfig.Enabled && cfg.ManagedServices.Registry {
+		manifestsDir := filepath.Join(targetDir, "openshift")
+		exec.Execute(ctx, fmt.Sprintf("mkdir -p %s", manifestsDir))
+		
+		ocMirrorResources := filepath.Join(workspaceDir, "oc-mirror-workspace", "working-dir", "cluster-resources")
+		
+		// Copy all YAML/JSON files (Signatures, IDMS, ITMS, CatalogSources) into the payload
+		copyManifestsCmd := fmt.Sprintf("cp %s/* %s/ 2>/dev/null || true", ocMirrorResources, manifestsDir)
+		exec.Execute(ctx, copyManifestsCmd)
+	}
+	// ========================================================================
 
 	// 3. Run openshift-install agent create image
 	toolsDir := filepath.Join(workspaceDir, "tools")
 	installerPath := filepath.Join(toolsDir, "openshift-install")
 	
-	// Prepend the tools directory to the PATH just for this command execution
-	cmd := fmt.Sprintf("export PATH=%s:$PATH && cd %s && %s agent create image --dir=. --log-level=info", toolsDir, targetDir, installerPath)
+	cmdStr := fmt.Sprintf("cd %s && %s agent create image --dir=. --log-level=info", targetDir, installerPath)
+	
+	if cfg.ManagedServices.Proxy {
+		proxyURL := fmt.Sprintf("http://%s:3128", cfg.Controller.IP)
+		noProxy := fmt.Sprintf("localhost,127.0.0.1,%s,%s,.%s.%s",
+			cfg.Network.MachineCIDR, cfg.Controller.IP, cfg.OpenShift.ClusterName, cfg.OpenShift.BaseDomain)
+		cmdStr = fmt.Sprintf("export HTTP_PROXY=%s HTTPS_PROXY=%s NO_PROXY='%s' && ", proxyURL, proxyURL, noProxy) + cmdStr
+	}
+	
+	cmd := fmt.Sprintf("export PATH=%s:$PATH && %s", toolsDir, cmdStr)
 
 	if _, err := exec.Execute(ctx, cmd); err != nil {
 		return fmt.Errorf("failed to create agent ISO: %w", err)
@@ -325,4 +464,48 @@ func generateAgentConfigYAML(cfg *types.AgentConfig) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// injectInsecurePolicy writes a MachineConfig that tells the nodes to accept unsigned CI images
+func injectInsecurePolicy(targetDir string) error {
+	manifestDir := filepath.Join(targetDir, "openshift")
+	os.MkdirAll(manifestDir, 0755)
+
+	policy := `apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: master
+  name: 99-master-insecure-policy
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+      - contents:
+          source: data:text/plain;charset=utf-8;base64,ewogICJkZWZhdWx0IjogWwogICAgewogICAgICAidHlwZSI6ICJpbnNlY3VyZUFjY2VwdEFueXRoaW5nIgogICAgfQogIF0sCiAgInRyYW5zcG9ydHMiOiB7CiAgICAiZG9ja2VyLWRhZW1vbiI6IHsKICAgICAgIiI6IFsKICAgICAgICB7CiAgICAgICAgICAidHlwZSI6ICJpbnNlY3VyZUFjY2VwdEFueXRoaW5nIgogICAgICAgIH0KICAgICAgXQogICAgfQogIH0KfQ==
+        mode: 420
+        overwrite: true
+        path: /etc/containers/policy.json
+---
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: worker
+  name: 99-worker-insecure-policy
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+      - contents:
+          source: data:text/plain;charset=utf-8;base64,ewogICJkZWZhdWx0IjogWwogICAgewogICAgICAidHlwZSI6ICJpbnNlY3VyZUFjY2VwdEFueXRoaW5nIgogICAgfQogIF0sCiAgInRyYW5zcG9ydHMiOiB7CiAgICAiZG9ja2VyLWRhZW1vbiI6IHsKICAgICAgIiI6IFsKICAgICAgICB7CiAgICAgICAgICAidHlwZSI6ICJpbnNlY3VyZUFjY2VwdEFueXRoaW5nIgogICAgICAgIH0KICAgICAgXQogICAgfQogIH0KfQ==
+        mode: 420
+        overwrite: true
+        path: /etc/containers/policy.json`
+
+	return os.WriteFile(filepath.Join(manifestDir, "99-insecure-policy.yaml"), []byte(policy), 0644)
 }

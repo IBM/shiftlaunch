@@ -32,7 +32,7 @@ Supported topologies:
 - multi: Multi-node cluster (3 masters + workers)
 
 Supported boot methods:
-- iso: Agent-based installer (ISO boot)
+- agent: Agent-based installer
 - netboot: Network boot (PXE/TFTP)`,
 	RunE: runGenerateConfig,
 }
@@ -41,7 +41,7 @@ func init() {
 	rootCmd.AddCommand(generateConfigCmd)
 
 	generateConfigCmd.Flags().StringVarP(&genConfigType, "type", "t", "sno", "Cluster topology: 'sno' or 'multi'")
-	generateConfigCmd.Flags().StringVarP(&genBootMethod, "boot", "b", "iso", "Boot method: 'iso' or 'netboot'")
+	generateConfigCmd.Flags().StringVarP(&genBootMethod, "boot", "b", "agent", "Boot method: 'agent' or 'netboot'")
 	generateConfigCmd.Flags().StringVarP(&genOutputPath, "output", "o", "config.yaml", "Path to save the generated file")
 }
 
@@ -52,7 +52,7 @@ func runGenerateConfig(cmd *cobra.Command, args []string) error {
 const configTemplate = `# =============================================================================
 # ShiftLaunch Agent Configuration Template
 # Topology: {{if .IsSNO}}SNO (Single Node OpenShift){{else}}Multi-Node Cluster{{end}}
-# Boot Method: {{if eq .BootMethod "iso"}}Agent ISO{{else}}Network Boot (PXE){{end}}
+# Boot Method: {{if eq .BootMethod "agent"}}Agent Installer{{else}}Network Boot (PXE){{end}}
 # =============================================================================
 # INSTRUCTIONS:
 # 1. Review and modify the values below to match your infrastructure.
@@ -70,16 +70,16 @@ managed_services:
   dns: true
   
   # Setup local DHCP to assign static IPs to LPARs based on MAC addresses
-  dhcp: {{if eq .BootMethod "iso"}}false{{else}}true{{end}}
+  dhcp: {{if eq .BootMethod "agent"}}false{{else}}true{{end}}
   
-  # Setup local TFTP server (Required for Netboot, ignored for ISO)
+  # Setup local TFTP server (Required for Netboot, ignored for Agent boot)
   pxe: {{if eq .BootMethod "netboot"}}true{{else}}false{{end}}
   
   # Setup local HAProxy to route traffic for the loadbalancer_ip (VIP)
   load_balancer: true
   
-  # Setup local NFS server to host Agent ISOs to the VIOS (Required for ISO)
-  nfs: {{if eq .BootMethod "iso"}}true{{else}}false{{end}}
+  # Setup local NFS server to host Agent images to the VIOS (Required for Agent boot)
+  nfs: {{if eq .BootMethod "agent"}}true{{else}}false{{end}}
 
 # -----------------------------------------------------------------------------
 # 2. CONTROLLER NODE (The "Where")
@@ -157,7 +157,7 @@ openshift:
 # 6. NODE TOPOLOGY (HMC Target LPARs)
 # -----------------------------------------------------------------------------
 nodes:
-  # Boot method: "iso" (Agent Installer) or "netboot" (Standard PXE UPI)
+  # Boot method: "agent" (Agent Installer) or "netboot" (Standard PXE UPI)
   boot_method: "{{.BootMethod}}"
 
 {{if .IsSNO}}
@@ -242,8 +242,8 @@ func GenerateConfig(configType, bootMethod, outputPath string) error {
 	if configType != "sno" && configType != "multi" {
 		return fmt.Errorf("invalid config type: '%s'. Must be 'sno' or 'multi'", configType)
 	}
-	if bootMethod != "iso" && bootMethod != "netboot" {
-		return fmt.Errorf("invalid boot method: '%s'. Must be 'iso' or 'netboot'", bootMethod)
+	if bootMethod != "agent" && bootMethod != "netboot" {
+		return fmt.Errorf("invalid boot method: '%s'. Must be 'agent' or 'netboot'", bootMethod)
 	}
 
 	// Safety check: Don't accidentally overwrite an existing cluster config

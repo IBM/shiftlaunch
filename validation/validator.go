@@ -94,7 +94,7 @@ func (v *Validator) Validate(ctx context.Context) error {
 	if v.hmcClient != nil {
 		v.log.StartPhase("[Check 3/4] Validating HMC connectivity and LPAR readiness...")
 		v.validateBYOILPARs()
-		if v.cfg.Nodes.BootMethod == "iso" {
+		if v.cfg.Nodes.BootMethod == "agent" {
 			v.validateMediaRepositorySpace()
 		}
 		v.log.EndPhase(true, "[Check 3/4] HMC infrastructure validated")
@@ -102,7 +102,7 @@ func (v *Validator) Validate(ctx context.Context) error {
 
 	// Check 4: External Services Validation
 	if v.exec != nil {
-		// NFS is excluded from this check because it's a hard requirement for ISO boot (validated in Check 1)
+		// NFS is excluded from this check because it's a hard requirement for Agent ISO boot (validated in Check 1)
 		hasExternalServices := !v.cfg.ManagedServices.DNS || !v.cfg.ManagedServices.DHCP || !v.cfg.ManagedServices.PXE || !v.cfg.ManagedServices.LoadBalancer
 
 		if hasExternalServices {
@@ -329,9 +329,9 @@ func (v *Validator) validateOpenShift() {
 		}
 	}
 
-	// Skip RHCOS validation for ISO boot (Agent installer downloads RHCOS automatically)
-	if v.cfg.Nodes.BootMethod == "iso" {
-		v.log.Info("Skipping RHCOS image validation for ISO boot (Agent installer downloads RHCOS automatically)")
+	// Skip RHCOS validation for Agent boot (Agent installer downloads RHCOS automatically)
+	if v.cfg.Nodes.BootMethod == "agent" {
+		v.log.Info("Skipping RHCOS image validation for Agent ISO boot (Agent installer downloads RHCOS automatically)")
 		// Still validate OCP client config
 		if o.OCPClientConfig.Client == "" {
 			v.errors = append(v.errors, "openshift.ocp_client_config.ocp_client is required")
@@ -386,9 +386,9 @@ func (v *Validator) validateChecksum(checksum, fieldName string) {
 
 // validateNodes validates node configuration
 func (v *Validator) validateNodes() {
-	// 🛡️ FIX: Enforce NFS requirement for ISO boot
-	if v.cfg.Nodes.BootMethod == "iso" && !v.cfg.ManagedServices.NFS {
-		v.errors = append(v.errors, "managed_services.nfs MUST be true when using boot_method: 'iso'. ShiftLaunch requires local NFS to transfer the generated Agent ISO to the VIOS.")
+	// 🛡️ FIX: Enforce NFS requirement for Agent boot
+	if v.cfg.Nodes.BootMethod == "agent" && !v.cfg.ManagedServices.NFS {
+		v.errors = append(v.errors, "managed_services.nfs MUST be true when using boot_method: 'agent'. ShiftLaunch requires local NFS to transfer the generated Agent ISO to the VIOS.")
 	}
 
 	if v.cfg.IsSNO() {
@@ -566,6 +566,36 @@ func (v *Validator) validateLocalDiskSpace(ctx context.Context) {
 	} else {
 		v.log.Debug(fmt.Sprintf("Controller has %.2f GB available in /var/www/html", availableGB))
 	}
+
+	// THE FIX: Validate registry capacity for Airgapped deployments
+	if v.cfg.DisconnectedConfig.Enabled && v.cfg.DisconnectedConfig.AutoMirror {
+		v.exec.Execute(ctx, "sudo mkdir -p /opt/registry/data")
+		regDfCmd := "df -BK --output=avail /opt/registry/data | tail -n 1 | tr -d 'K'"
+		regOutput, regErr := v.exec.Execute(ctx, regDfCmd)
+		if regErr != nil {
+			v.warnings = append(v.warnings, fmt.Sprintf("Unable to check registry disk space: %v", regErr))
+			return
+		}
+		
+		var regAvailKB int
+		regTrimmed := strings.TrimSpace(regOutput)
+		if _, err := fmt.Sscanf(regTrimmed, "%d", &regAvailKB); err != nil {
+			v.warnings = append(v.warnings, fmt.Sprintf("Unable to parse registry disk space output '%s': %v", regTrimmed, err))
+			return
+		}
+		
+		regAvailGB := float64(regAvailKB) / (1024 * 1024)
+		// A full OCP mirror usually needs at least 60GB
+		regRequiredGB := 40.0
+		
+		if regAvailGB < regRequiredGB {
+			v.errors = append(v.errors,
+				fmt.Sprintf("INSUFFICIENT DISK SPACE: Airgap mirroring enabled, but /opt/registry/data only has %.2f GB available (%.0f GB required).",
+					regAvailGB, regRequiredGB))
+		} else {
+			v.log.Debug(fmt.Sprintf("Registry partition has %.2f GB available for image mirroring", regAvailGB))
+		}
+	}
 }
 
 // ============================================================================
@@ -653,7 +683,7 @@ func (v *Validator) validateExternalServices(ctx context.Context) {
 		v.validateExternalDHCP()
 	}
 	// FIX: Only validate external PXE if we are actually using network boot!
-	if !v.cfg.ManagedServices.PXE && v.cfg.Nodes.BootMethod != "iso" {
+	if !v.cfg.ManagedServices.PXE && v.cfg.Nodes.BootMethod != "agent" {
 		v.validateExternalPXE()
 	}
 	if !v.cfg.ManagedServices.LoadBalancer {
@@ -700,7 +730,7 @@ func (v *Validator) validateExternalDHCP() {
 	}
 	
 	// FIX: Provide contextual warnings based on the boot method
-	if v.cfg.Nodes.BootMethod == "iso" {
+	if v.cfg.Nodes.BootMethod == "agent" {
 		v.warnings = append(v.warnings,
 			"External DHCP detected. Ensure DHCP server is configured with:\n"+
 				"   - IP address pool covering cluster nodes (or use static IPs via NMState)\n"+
@@ -800,7 +830,7 @@ func (v *Validator) validateMediaRepositorySpace() {
 
 	// 2. Validate each unique system independently
 	for systemName, count := range systemNodeCount {
-		v.log.Info(fmt.Sprintf("Validating repository on system '%s' for %d node(s)...", systemName, count))
+		v.log.Info(fmt.Sprintf("Validating Media Repository on system '%s' for %d node(s)...", systemName, count))
 
 		_, sysUUID, err := v.hmcClient.GetManagedSystemByNameQuick(context.Background(), systemName, v.debug)
 		if err != nil {

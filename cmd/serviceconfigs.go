@@ -48,14 +48,14 @@ func dumpConfig(orch *orchestrator.Orchestrator, cfg *types.AgentConfig) error {
 	vip := cfg.Network.LoadBalancerIP
 
 	// Check if any external services are configured (Inverted logic for new ManagedServices block)
-	// Boot method aware: DHCP/PXE only matter for netboot, NFS only matters for ISO
+	// Boot method aware: DHCP/PXE only matter for netboot, NFS only matters for Agent ISO
 	hasExternalServices := !cfg.ManagedServices.DNS || !cfg.ManagedServices.LoadBalancer
 	
 	// Add boot-method-specific checks
-	if cfg.Nodes.BootMethod != "iso" {
+	if cfg.Nodes.BootMethod != "agent" {
 		hasExternalServices = hasExternalServices || !cfg.ManagedServices.DHCP || !cfg.ManagedServices.PXE
 	}
-	if cfg.Nodes.BootMethod == "iso" {
+	if cfg.Nodes.BootMethod == "agent" {
 		hasExternalServices = hasExternalServices || !cfg.ManagedServices.NFS
 	}
 
@@ -81,23 +81,23 @@ func dumpConfig(orch *orchestrator.Orchestrator, cfg *types.AgentConfig) error {
 	}
 
 	// Dump DHCP configuration (only relevant for netboot)
-	if !cfg.ManagedServices.DHCP && cfg.Nodes.BootMethod != "iso" {
+	if !cfg.ManagedServices.DHCP && cfg.Nodes.BootMethod != "agent" {
 		if err := dumpDHCPConfig(cfg); err != nil {
 			return fmt.Errorf("failed to generate DHCP config: %w", err)
 		}
 	}
 
 	// Dump PXE configuration using template (only relevant for netboot)
-	if !cfg.ManagedServices.PXE && cfg.Nodes.BootMethod != "iso" {
+	if !cfg.ManagedServices.PXE && cfg.Nodes.BootMethod != "agent" {
 		if err := dumpPXEConfigFromTemplate(clusterName, cfg, nodes, cfg.Controller.IP); err != nil {
 			return fmt.Errorf("failed to generate PXE config: %w", err)
 		}
 	}
 	
-	// Dump NFS configuration (only relevant for ISO boot)
-	if !cfg.ManagedServices.NFS && cfg.Nodes.BootMethod == "iso" {
+	// Dump NFS configuration (only relevant for Agent boot)
+	if !cfg.ManagedServices.NFS && cfg.Nodes.BootMethod == "agent" {
 		fmt.Println("--------------------------------------------------------------------------------")
-		fmt.Println("NFS Server Configuration (Required for ISO Boot)")
+		fmt.Println("NFS Server Configuration (Required for Agent ISO)")
 		fmt.Println("--------------------------------------------------------------------------------")
 		fmt.Println("You must configure an NFS server to host the Agent ISO files.")
 		fmt.Printf("The VIOS will mount the ISO from: nfs://<your-nfs-server>/<export-path>\n")

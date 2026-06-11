@@ -65,21 +65,21 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 	o.logger.EndPhase(phaseErr == nil, "Cluster LPARs powered off")
 	o.endPhase(phaseExec, phaseErr)
 
-	// Phase 2: Clean up ISO mappings (AFTER LPARs are powered off)
-	if o.cfg.Nodes.BootMethod == "iso" {
-		phaseExec = o.startPhase("teardown_iso_cleanup")
+	// Phase 2: Clean up Agent mappings (AFTER LPARs are powered off)
+	if o.cfg.Nodes.BootMethod == "agent" {
+		phaseExec = o.startPhase("teardown_agent_cleanup")
 		o.logger.StartPhase("Cleaning up VIOS ISO Mappings...")
 		phaseErr = nil
 		func() {
 			// We no longer initialize the provider here either!
 			if hmcProvider, ok := provider.(*compute.HMCProvider); ok {
 				if err := hmcProvider.CleanupISOMappings(ctx); err != nil {
-					o.logger.Warn("Failed to clean up some ISO mappings", "error", err)
+					o.logger.Warn("Failed to clean up some Agent ISO mappings", "error", err)
 					phaseErr = err
 				}
 			}
 		}()
-		o.logger.EndPhase(phaseErr == nil, "VIOS ISO Mappings cleaned up")
+		o.logger.EndPhase(phaseErr == nil, "VIOS Agent ISO Mappings cleaned up")
 		o.endPhase(phaseExec, phaseErr)
 	}
 
@@ -113,6 +113,21 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 				o.executor.Execute(shieldedCtx, fmt.Sprintf("sudo ip addr del %s/%s dev %s", vip, prefix, iface))
 			}
 		}
+
+		if o.cfg.ManagedServices.Proxy {
+			squidMgr := services.NewSquidManager(o.cfg, o.executor, o.logger, o.workspaceDir)
+			if err := squidMgr.Cleanup(shieldedCtx); err != nil {
+				o.logger.Warn("Failed to clean up Squid proxy", "error", err)
+			}
+		}
+
+		// THE FIX: Clean up the Podman registry, firewall rules, and certs!
+		if o.cfg.DisconnectedConfig.Enabled && o.cfg.ManagedServices.Registry {
+			registryMgr := services.NewRegistryManager(o.cfg, o.executor, o.logger, o.stateManager, o.state, o.workspaceDir)
+			if err := registryMgr.Cleanup(shieldedCtx); err != nil {
+				o.logger.Warn("Failed to clean up Local Registry", "error", err)
+			}
+		}
 		
 		if !o.stateManager.IsServiceRemoved(o.state, "local-hosts") {
 			netMgr := controller.NewNetworkManager(o.executor, o.debug, o.logger)
@@ -123,11 +138,11 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 			}
 		}
 		
-		if o.cfg.Nodes.BootMethod != "iso" {
+		if o.cfg.Nodes.BootMethod != "agent" {
 			httpServer := services.NewHTTPServerManager(o.cfg, o.daemonCfg, o.executor, o.logger)
 			httpServer.Cleanup(shieldedCtx)
 		}
-		if o.cfg.Nodes.BootMethod == "iso" && o.cfg.ManagedServices.NFS {
+		if o.cfg.Nodes.BootMethod == "agent" && o.cfg.ManagedServices.NFS {
 			nfsMgr := services.NewNFSManager(o.cfg, o.executor, o.logger, o.workspaceDir)
 			nfsMgr.Cleanup(shieldedCtx)
 		}

@@ -39,24 +39,31 @@ interface={{.Interface}}
 server={{.}}
 {{- end}}
 
-# DNS A Records for cluster nodes
+# DNS A and PTR Records for cluster nodes (Short name and FQDN)
 {{- range .Nodes}}
-address=/{{.Hostname}}/{{.IP}}
+host-record={{.Hostname}},{{.Hostname}}.{{$.ClusterName}}.{{$.BaseDomain}},{{.IP}}
 {{- end}}
 
-# DNS A Records for OpenShift services
-address=/api.{{.ClusterName}}.{{.BaseDomain}}/{{.VIP}}
+# DNS A and PTR Records for OpenShift services
+host-record=api.{{.ClusterName}}.{{.BaseDomain}},{{.VIP}}
 {{- if .IsSNO}}
-address=/api-int.{{.ClusterName}}.{{.BaseDomain}}/{{.IP}}
+host-record=api-int.{{.ClusterName}}.{{.BaseDomain}},{{.IP}}
 {{- else}}
-address=/api-int.{{.ClusterName}}.{{.BaseDomain}}/{{.VIP}}
+host-record=api-int.{{.ClusterName}}.{{.BaseDomain}},{{.VIP}}
 {{- end}}
+
+# Wildcard A Record for Ingress/Apps (host-record does not support wildcards)
 address=/.apps.{{.ClusterName}}.{{.BaseDomain}}/{{.VIP}}
 
+{{- if .HasRegistry}}
+# Local Registry A and PTR Record
+host-record={{.RegistryHostname}},{{.HelperIP}}
+{{- end}}
+
 {{- if not .IsSNO}}
-# etcd A Records
+# etcd A and PTR Records
 {{- range $index, $master := .Masters}}
-address=/etcd-{{$index}}.{{$.ClusterName}}.{{$.BaseDomain}}/{{.IP}}
+host-record=etcd-{{$index}}.{{$.ClusterName}}.{{$.BaseDomain}},{{.IP}}
 {{- end}}
 
 # etcd SRV Records (for multi-node clusters only)
@@ -133,12 +140,14 @@ menuentry '{{.MenuLabel}}' {
 // CONSOLIDATED MANAGER LOGIC
 // =============================================================================
 
+// DNSmasqManager handles DNS and DHCP service configuration for OpenShift clusters
 type DNSmasqManager struct {
 	cfg       *types.AgentConfig
 	daemonCfg *config.AgentDaemonConfig
 	executor  *localexec.LocalClient
 }
 
+// NewDNSmasqManager creates a new DNSmasq manager instance for DNS and DHCP services
 func NewDNSmasqManager(cfg *types.AgentConfig, daemonCfg *config.AgentDaemonConfig, exec *localexec.LocalClient) *DNSmasqManager {
 	return &DNSmasqManager{
 		cfg:       cfg,
@@ -255,28 +264,36 @@ func (m *DNSmasqManager) prepareTemplateData(ctx context.Context) map[string]int
 		dnsServer = netConfig.Nameserver
 	}
 
-	// Logic for PXEServer: Default to controller IP. 
+	// Logic for PXEServer: Default to controller IP.
 	// (If PXE is unmanaged but DHCP is managed, this should point to the customer's external PXE server).
 	pxeServer := m.cfg.Controller.IP
 
+	// Figure out the registry hostname (custom or auto-generated)
+	registryHost := m.cfg.DisconnectedConfig.RegistryHostname
+	if registryHost == "" {
+		registryHost = fmt.Sprintf("registry.%s.%s", m.cfg.OpenShift.ClusterName, m.cfg.OpenShift.BaseDomain)
+	}
+
 	data := map[string]interface{}{
-		"ClusterName":   m.cfg.OpenShift.ClusterName,
-		"Type":          "UPI",
-		"OCPVersion":    m.cfg.OpenShift.Version,
-		"Timestamp":     time.Now().Format(time.RFC3339),
-		"Interface":     m.cfg.Controller.NetworkInterface,
-		"NetworkCIDR":   netConfig.MachineCIDR,
-		"NetworkAddr":   networkAddr,
-		"Netmask":       calculatedNetmask, // Common for Power network_cidr /20
-		"Gateway":       netConfig.Gateway,
-		"HelperIP":      m.cfg.Controller.IP,
-		"DNSServer":     dnsServer, // <--- New Variable
-		"PXEServer":     pxeServer, // <--- New Variable
-		"BaseDomain":    m.cfg.OpenShift.BaseDomain,
-		"VIP":           netConfig.LoadBalancerIP,
-		"IsSNO":         isSno,
-		"Nodes":         m.cfg.GetAllNodes(),
-		"DNSForwarders": netConfig.DNSForwarders,
+		"ClusterName":      m.cfg.OpenShift.ClusterName,
+		"Type":             "UPI",
+		"OCPVersion":       m.cfg.OpenShift.Version,
+		"Timestamp":        time.Now().Format(time.RFC3339),
+		"Interface":        m.cfg.Controller.NetworkInterface,
+		"NetworkCIDR":      netConfig.MachineCIDR,
+		"NetworkAddr":      networkAddr,
+		"Netmask":          calculatedNetmask, // Common for Power network_cidr /20
+		"Gateway":          netConfig.Gateway,
+		"HelperIP":         m.cfg.Controller.IP,
+		"DNSServer":        dnsServer, // <--- New Variable
+		"PXEServer":        pxeServer, // <--- New Variable
+		"BaseDomain":       m.cfg.OpenShift.BaseDomain,
+		"VIP":              netConfig.LoadBalancerIP,
+		"IsSNO":            isSno,
+		"Nodes":            m.cfg.GetAllNodes(),
+		"DNSForwarders":    netConfig.DNSForwarders,
+		"HasRegistry":      m.cfg.DisconnectedConfig.Enabled && m.cfg.ManagedServices.Registry,
+		"RegistryHostname": registryHost,
 	}
 
 	// Topology specific population
@@ -308,6 +325,7 @@ func (m *DNSmasqManager) prepareGrubData(ctx context.Context, node *types.NodeCo
 			"rd.neednet=1",
 			"ignition.platform.id=metal",
 			"ignition.firstboot",
+			"coreos.inst.copy_network",
 			fmt.Sprintf("coreos.live.rootfs_url=http://%s:%d/%s/rhcos/rootfs.img", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName),
 			fmt.Sprintf("ignition.config.url=http://%s:%d/%s/ignition/%s", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName, ign),
 		}
@@ -325,6 +343,7 @@ func (m *DNSmasqManager) prepareGrubData(ctx context.Context, node *types.NodeCo
 			"rd.neednet=1",
 			"ip=dhcp",
 			"coreos.inst=yes",
+			"coreos.inst.copy_network",
 			fmt.Sprintf("coreos.inst.install_dev=%s", m.daemonCfg.Paths.InstallDevice),
 			fmt.Sprintf("coreos.live.rootfs_url=http://%s:%d/%s/rhcos/rootfs.img", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName),
 			fmt.Sprintf("coreos.inst.ignition_url=http://%s:%d/%s/ignition/%s", ctrlIP, m.daemonCfg.Network.HTTPPort, clusterName, ign),

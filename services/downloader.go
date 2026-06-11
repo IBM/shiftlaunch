@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,7 +34,7 @@ func NewDownloader(cfg *types.AgentConfig, daemonCfg *config.AgentDaemonConfig, 
 // DownloadAll downloads all required artifacts into the local workspace
 func (d *Downloader) DownloadAll(ctx context.Context,workspaceDir string) error {
 	// --- FIX: Removed the duplicate unconditional download call ---
-	if d.cfg.Nodes.BootMethod == "iso" {
+	if d.cfg.Nodes.BootMethod == "agent" {
 		d.logger.Info("Skipping RHCOS image downloads (Agent ISO handles payload dynamically)")
 	} else {
 		if err := d.DownloadRHCOSImages(ctx, workspaceDir); err != nil {
@@ -163,6 +164,17 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context,workspaceDir str
 	toolsDir := filepath.Join(workspaceDir, "tools")
 	d.exec.Execute(ctx,fmt.Sprintf("mkdir -p %s", toolsDir))
 
+	// Check if the extracted binaries are already here (Airgap mode safety)
+	installerPath := filepath.Join(toolsDir, "openshift-install")
+	ocPath := filepath.Join(toolsDir, "oc")
+
+	if _, err1 := os.Stat(installerPath); err1 == nil {
+		if _, err2 := os.Stat(ocPath); err2 == nil {
+			d.logger.Info("Airgap Mode: OpenShift tools already pre-staged in workspace. Skipping download framework.")
+			return nil
+		}
+	}
+
 	ocpConfig := d.cfg.OpenShift.OCPClientConfig
 	manifestPath := filepath.Join(toolsDir, "sha256sum.txt")
 	timeout := d.daemonCfg.Timeouts.DownloadTimeoutSec // Get timeout from config
@@ -190,6 +202,7 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context,workspaceDir str
 	}{
 		{ocpConfig.Installer, "openshift-install-linux.tar.gz", "OpenShift installer", ocpConfig.InstallerCSUM},
 		{ocpConfig.Client, "openshift-client-linux.tar.gz", "OpenShift client", ocpConfig.ClientCSUM},
+		{ocpConfig.MirrorClient, "oc-mirror.tar.gz", "OpenShift mirror plugin", ocpConfig.MirrorClientCSUM},
 	}
 
 	for _, tool := range tools {
@@ -265,11 +278,10 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context,workspaceDir str
 }
 
 func (d *Downloader) extractOpenShiftTools(ctx context.Context,toolsDir string) error {
-	// CRITICAL: Shield from cancellation! Killing tar mid-extraction leaves a corrupted,
-	// half-written binary on disk that will crash all future ignition generations!
 	shieldedCtx := context.WithoutCancel(ctx)
 
-	tools := []string{"openshift-install-linux.tar.gz", "openshift-client-linux.tar.gz"}
+	// NEW: Add oc-mirror.tar.gz to extraction targets
+	tools := []string{"openshift-install-linux.tar.gz", "openshift-client-linux.tar.gz", "oc-mirror.tar.gz"}
 	for _, tool := range tools {
 		tarPath := filepath.Join(toolsDir, tool)
 		if _, err := d.exec.Execute(shieldedCtx, fmt.Sprintf("test -s %s", tarPath)); err != nil {
@@ -280,7 +292,9 @@ func (d *Downloader) extractOpenShiftTools(ctx context.Context,toolsDir string) 
 			return fmt.Errorf("failed to extract %s: %w", tool, err)
 		}
 	}
-	makeExecCmd := fmt.Sprintf("cd %s && chmod +x openshift-install oc kubectl 2>/dev/null || true", toolsDir)
+	
+	// NEW: Add oc-mirror to the chmod list
+	makeExecCmd := fmt.Sprintf("cd %s && chmod +x openshift-install oc kubectl oc-mirror 2>/dev/null || true", toolsDir)
 	_, err := d.exec.Execute(shieldedCtx, makeExecCmd)
 	return err
 }
