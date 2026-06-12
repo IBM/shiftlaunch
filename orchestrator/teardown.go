@@ -35,7 +35,7 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 	// Downgraded to Debug to keep the terminal clean
 	o.logger.Debug("Initiating Soft Teardown", "cluster", o.cfg.OpenShift.ClusterName)
 
-	// --- NEW: Centralized HMC Connection Phase ---
+	// ---Centralized HMC Connection Phase ---
 	o.logger.StartPhase("Connecting to HMC...")
 	provider, err := compute.NewProviderWithState(o.cfg, o.logger, o.debug, o.stateManager)
 	if err != nil {
@@ -88,7 +88,7 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 	o.logger.StartPhase("Removing local network and service configurations...")
 	phaseErr = nil
 	func() {
-		// CRITICAL: Shield local network cleanup from cancellation to prevent orphaned VIPs and NFS exports!
+		// Shield local network cleanup from cancellation to prevent orphaned VIPs and NFS exports!
 		shieldedCtx := context.WithoutCancel(ctx)
 
 		if o.cfg.ManagedServices.DNS || o.cfg.ManagedServices.DHCP || o.cfg.ManagedServices.PXE {
@@ -121,7 +121,7 @@ func (o *Orchestrator) Teardown(ctx context.Context) error {
 			}
 		}
 
-		// THE FIX: Clean up the Podman registry, firewall rules, and certs!
+		//  Clean up the Podman registry, firewall rules, and certs!
 		if o.cfg.DisconnectedConfig.Enabled && o.cfg.ManagedServices.Registry {
 			registryMgr := services.NewRegistryManager(o.cfg, o.executor, o.logger, o.stateManager, o.state, o.workspaceDir)
 			if err := registryMgr.Cleanup(shieldedCtx); err != nil {

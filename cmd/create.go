@@ -145,7 +145,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			}
 		}
 		
-		// --- FIX: Use yaml.Marshal to ensure CLI overrides are safely persisted to the workspace! ---
+		// ---  Use yaml.Marshal to ensure CLI overrides are safely persisted to the workspace! ---
 		data, err := yaml.Marshal(cfg)
 		if err == nil {
 			os.WriteFile(existingConfigPath, data, 0644)

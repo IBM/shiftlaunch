@@ -102,11 +102,42 @@ func runInfo(cmd *cobra.Command, args []string) error {
 			})
 		}
 
+		// Evaluate Proxy Configuration
+		proxyMode, proxyURL := "none", ""
+		if cfg.ManagedServices.Proxy {
+			proxyMode = "managed"
+			proxyURL = fmt.Sprintf("http://%s:3128", cfg.Controller.IP)
+		} else if cfg.ExternalProxy.HTTPProxy != "" {
+			proxyMode = "external"
+			proxyURL = cfg.ExternalProxy.HTTPProxy
+		}
+
+		// Evaluate Registry Configuration
+		registryMode, registryURL := "official", ""
+		if cfg.ManagedServices.Registry {
+			registryMode = "managed"
+			registryURL = fmt.Sprintf("%s:5000", cfg.Controller.IP)
+		} else if cfg.DisconnectedConfig.Enabled {
+			registryMode = "external"
+			registryURL = cfg.DisconnectedConfig.RegistryHostname
+		}
+
 		// Build the highly enriched core JSON response
 		output := map[string]interface{}{
 			"name":             state.ClusterName,
 			"status":           state.Status,
 			"phase":            state.CurrentPhase,
+			"services": map[string]interface{}{
+				"managed_dns":           cfg.ManagedServices.DNS,
+				"managed_dhcp":          cfg.ManagedServices.DHCP && cfg.Nodes.BootMethod != "agent",
+				"managed_pxe":           cfg.ManagedServices.PXE && cfg.Nodes.BootMethod != "agent",
+				"managed_load_balancer": cfg.ManagedServices.LoadBalancer,
+				"managed_nfs":           cfg.ManagedServices.NFS && cfg.Nodes.BootMethod == "agent",
+				"proxy_mode":            proxyMode,
+				"proxy_url":             proxyURL,
+				"registry_mode":         registryMode,
+				"registry_url":          registryURL,
+			},
 			"type":             clusterType,
 			"ocp_version":      cfg.OpenShift.Version,
 			"boot_method":      cfg.Nodes.BootMethod,

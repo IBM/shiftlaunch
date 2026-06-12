@@ -1,0 +1,49 @@
+# =============================================================================
+# Minimal Single Node OpenShift (SNO) Agent Configuration
+# =============================================================================
+
+managed_services:
+  dns: true
+  load_balancer: true
+  nfs: true
+
+controller:
+  network_interface: "eth0"
+
+hmc:
+  ip: "192.168.100.10"
+  username: "hscroot"
+  password: "YOUR_HMC_PASSWORD"
+
+network:
+  loadbalancer_ip: "192.168.100.50"
+  machine_network_cidr: "192.168.100.0/24" 
+  gateway: "192.168.100.1"
+  dns_forwarders:
+    - "8.8.8.8"
+
+openshift:
+  cluster_name: "sno-cluster"
+  version: "4.21.18"
+  release_type: "official" # "official" or "ci"
+  base_domain: "example.local"
+  pull_secret_file: "./pull-secret.json"
+  ssh_public_key_file: "~/.ssh/id_rsa.pub"
+  # -------------------------------------------------------------------------
+  # INTERNAL NETWORK ROUTING
+  # NOTE: ShiftLaunch automatically uses standard OpenShift internal defaults.
+  # Only uncomment and modify these if they conflict with your corporate network!
+  # -------------------------------------------------------------------------
+  # cluster_network_cidr: "10.128.0.0/14"
+  # cluster_network_host_prefix: 23
+  # service_network: "172.30.0.0/16"
+  
+
+nodes:
+  boot_method: "agent"
+  
+  sno:
+    - name: "sno-0"
+      ip: "192.168.100.60"
+      existing_lpar_name: "lpar-sno-0"
+      system_name: "Power-System-9080"

@@ -430,7 +430,7 @@ func (v *Validator) validateDisconnected() {
 
 // validateNodes validates node configuration
 func (v *Validator) validateNodes() {
-	// 🛡️ FIX: Enforce NFS requirement for Agent boot
+	// 🛡️  Enforce NFS requirement for Agent boot
 	if v.cfg.Nodes.BootMethod == "agent" && !v.cfg.ManagedServices.NFS {
 		v.errors = append(v.errors, "managed_services.nfs MUST be true when using boot_method: 'agent'. ShiftLaunch requires local NFS to transfer the generated Agent ISO to the VIOS.")
 	}
@@ -598,7 +598,7 @@ func (v *Validator) validateMultiNodeCluster() {
 // ============================================================================
 
 func (v *Validator) validateLocalEnvironment(ctx context.Context) {
-	// NEW: Validate the physical interface actually exists on this host
+	//Validate the physical interface actually exists on this host
 	iface := v.cfg.Controller.NetworkInterface
 	if iface != "" {
 		checkCmd := fmt.Sprintf("ip link show %s >/dev/null 2>&1 && echo 'exists' || echo 'missing'", iface)
@@ -680,7 +680,7 @@ func (v *Validator) validateLocalDiskSpace(ctx context.Context) {
 		v.log.Debug(fmt.Sprintf("Controller has %.2f GB available in /var/www/html", availableGB))
 	}
 
-	// THE FIX: Validate registry capacity for Airgapped deployments
+	//  Validate registry capacity for Airgapped deployments
 	if v.cfg.DisconnectedConfig.Enabled && v.cfg.DisconnectedConfig.AutoMirror {
 		v.exec.Execute(ctx, "sudo mkdir -p /opt/registry/data")
 		regDfCmd := "df -BK --output=avail /opt/registry/data | tail -n 1 | tr -d 'K'"
@@ -795,7 +795,7 @@ func (v *Validator) validateExternalServices(ctx context.Context) {
 	if !v.cfg.ManagedServices.DHCP {
 		v.validateExternalDHCP()
 	}
-	// FIX: Only validate external PXE if we are actually using network boot!
+	//  Only validate external PXE if we are actually using network boot!
 	if !v.cfg.ManagedServices.PXE && v.cfg.Nodes.BootMethod != "agent" {
 		v.validateExternalPXE()
 	}
@@ -842,7 +842,7 @@ func (v *Validator) validateExternalDHCP() {
 		return
 	}
 	
-	// FIX: Provide contextual warnings based on the boot method
+	//  Provide contextual warnings based on the boot method
 	if v.cfg.Nodes.BootMethod == "agent" {
 		v.warnings = append(v.warnings,
 			"External DHCP detected. Ensure DHCP server is configured with:\n"+

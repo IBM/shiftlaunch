@@ -68,7 +68,7 @@ func (l *LocalClient) WriteFile(ctx context.Context,path string, content []byte,
 	// Move into place with sudo (required for /etc/ directories)
 	mvCmd := fmt.Sprintf("sudo mv %s %s && sudo chmod %04o %s && sudo restorecon %s 2>/dev/null || true", tmpPath, path, perms, path, path)
 	
-	// CRITICAL: Shield the move-and-permission chain.
+	// Shield the move-and-permission chain.
 	// If aborted mid-chain, the config file will have the wrong SELinux context, permanently breaking the service!
 	if _, err := l.Execute(context.WithoutCancel(ctx), mvCmd); err != nil {
 		return fmt.Errorf("failed to move file into place: %w", err)

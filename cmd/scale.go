@@ -162,7 +162,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 	}
 	cfg = &updatedCfg
 
-	// 3. THE SMART RESUME FIX: Differentiate between nodes needing Boot vs Monitoring
+	// 3. Differentiate between nodes needing Boot vs Monitoring
 	var scaleTargets []types.NodeConfig
 	var pendingBoot []types.NodeConfig
 	
@@ -358,7 +358,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 
 		log.StartPhase("Invoking native OpenShift CLI to compile specialized node installer ISO...")
 		
-		// THE FIX: Use the updated pull secret for Day-2 ISO compilation so it can authenticate to the local registry!
+		//  Use the updated pull secret for Day-2 ISO compilation so it can authenticate to the local registry!
 		pullSecretPath := cfg.OpenShift.PullSecretFile
 		if updatedCfg.DisconnectedConfig.Enabled && updatedCfg.ManagedServices.Registry {
 			updatedSecretPath := filepath.Join(workspaceDir, "pull-secret-updated.json")

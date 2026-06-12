@@ -84,7 +84,7 @@ func printClusterList(workspaceBase string) error {
 
 	// Prepare table data for human output
 	tableData := pterm.TableData{
-		{"CLUSTER NAME", "STATUS", "CLUSTER IP", "TYPE", "DURATION", "LAST UPDATED"},
+		{"CLUSTER NAME", "STATUS", "CLUSTER IP", "TYPE", "NETWORK", "DURATION", "LAST UPDATED"},
 	}
 
 	visibleCount := 0
@@ -116,7 +116,7 @@ func printClusterList(workspaceBase string) error {
 				clusterNames = append(clusterNames, clusterName)
 			} else {
 				tableData = append(tableData, []string{
-					clusterName, "unknown", "N/A", "N/A", "N/A", "N/A",
+					clusterName, "unknown", "N/A", "N/A", "N/A", "N/A", "N/A",
 				})
 				
 				// Append corrupted state to JSON as well
@@ -129,16 +129,24 @@ func printClusterList(workspaceBase string) error {
 			continue
 		}
 
-		// Extract cluster type and IP
+		// Extract cluster type, IP, and Network configuration
 		clusterType := "Multi (agent)" // Default
-		clusterIP := "Unknown" // --- FIX: Default value for Cluster IP ---
+		clusterIP := "Unknown"         // Default
+		networkProfile := "Unknown"    // Default
 
 		data, err := os.ReadFile(configFile)
 		if err == nil {
 			var cfg types.AgentConfig
 			if err := yaml.Unmarshal(data, &cfg); err == nil {
-
-				// --- FIX: Extract the LoadBalancerIP (VIP) ---
+				
+				// ---Evaluate Network Boundary Profile ---
+				networkProfile = "Connected"
+				if cfg.DisconnectedConfig.Enabled {
+					networkProfile = "Fully Disconnected"
+				} else if cfg.ManagedServices.Proxy || cfg.ExternalProxy.HTTPProxy != "" {
+					networkProfile = "Soft Disconnected"
+				}
+				// ---  Extract the LoadBalancerIP (VIP) ---
 				if cfg.Network.LoadBalancerIP != "" {
 					clusterIP = cfg.Network.LoadBalancerIP
 				}
@@ -205,17 +213,19 @@ func printClusterList(workspaceBase string) error {
 				state.Status,
 				clusterIP,
 				clusterType,
+				networkProfile, // <--- INJECTED HERE
 				duration,
 				timestamp,
 			})
 			
 			// Append valid row to JSON array
 			jsonOutput = append(jsonOutput, map[string]string{
-				"name":       clusterName,
-				"status":     state.Status,
-				"cluster_ip": clusterIP,
-				"type":       clusterType,
-				"duration":   duration,
+				"name":         clusterName,
+				"status":       state.Status,
+				"cluster_ip":   clusterIP,
+				"type":         clusterType,
+				"network":      networkProfile, // <--- INJECTED HERE
+				"duration":     duration,
 				"last_updated": timestamp,
 			})
 		}

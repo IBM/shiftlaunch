@@ -257,6 +257,19 @@ func loadConfig(requireConfig bool) (*types.AgentConfig, *config.AgentDaemonConf
 			}
 		}
 	}
+
+	// ========================================================================
+	// UX OPTIMIZATION 3: Auto-fill default OpenShift Network CIDRs if omitted
+	// ========================================================================
+	if cfg.OpenShift.ClusterNetworkCIDR == "" {
+		cfg.OpenShift.ClusterNetworkCIDR = "10.128.0.0/14"
+	}
+	if cfg.OpenShift.HostPrefix == 0 {
+		cfg.OpenShift.HostPrefix = 23
+	}
+	if cfg.OpenShift.ServiceNetwork == "" {
+		cfg.OpenShift.ServiceNetwork = "172.30.0.0/16"
+	}
 	// ========================================================================
 
 	// Auto-discover Controller IP ONLY if not explicitly provided in YAML

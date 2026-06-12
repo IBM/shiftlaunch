@@ -33,7 +33,7 @@ func NewDownloader(cfg *types.AgentConfig, daemonCfg *config.AgentDaemonConfig, 
 
 // DownloadAll downloads all required artifacts into the local workspace
 func (d *Downloader) DownloadAll(ctx context.Context,workspaceDir string) error {
-	// --- FIX: Removed the duplicate unconditional download call ---
+	// ---  Removed the duplicate unconditional download call ---
 	if d.cfg.Nodes.BootMethod == "agent" {
 		d.logger.Info("Skipping RHCOS image downloads (Agent ISO handles payload dynamically)")
 	} else {
@@ -280,7 +280,7 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context,workspaceDir str
 func (d *Downloader) extractOpenShiftTools(ctx context.Context,toolsDir string) error {
 	shieldedCtx := context.WithoutCancel(ctx)
 
-	// NEW: Add oc-mirror.tar.gz to extraction targets
+	//Add oc-mirror.tar.gz to extraction targets
 	tools := []string{"openshift-install-linux.tar.gz", "openshift-client-linux.tar.gz", "oc-mirror.tar.gz"}
 	for _, tool := range tools {
 		tarPath := filepath.Join(toolsDir, tool)
@@ -293,7 +293,7 @@ func (d *Downloader) extractOpenShiftTools(ctx context.Context,toolsDir string) 
 		}
 	}
 	
-	// NEW: Add oc-mirror to the chmod list
+	//Add oc-mirror to the chmod list
 	makeExecCmd := fmt.Sprintf("cd %s && chmod +x openshift-install oc kubectl oc-mirror 2>/dev/null || true", toolsDir)
 	_, err := d.exec.Execute(shieldedCtx, makeExecCmd)
 	return err

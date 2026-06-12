@@ -1,0 +1,159 @@
+# =============================================================================
+# ShiftLaunch Complete Configuration Reference
+# This template contains EVERY configurable option available in ShiftLaunch.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. MANAGED SERVICES (Infrastructure Toggles)
+# Tells ShiftLaunch which services to install and manage locally on the controller.
+# -----------------------------------------------------------------------------
+managed_services:
+  dns: true            # Setup local dnsmasq (Answers for the cluster domain)
+  dhcp: true           # Setup local dhcp (Required for netboot, ignored for agent)
+  pxe: true            # Setup local TFTP (Required for netboot, ignored for agent)
+  load_balancer: true  # Setup local HAProxy (Routes traffic for loadbalancer_ip)
+  nfs: true            # Setup local NFS server (Required for agent boot)
+  proxy: false         # Triggers local Squid proxy installation
+  registry: false      # Triggers local Podman registry & auth/cert generation
+
+# -----------------------------------------------------------------------------
+# 2. CONTROLLER (The "Where")
+# -----------------------------------------------------------------------------
+controller:
+  network_interface: "eth0"  # Physical interface to bind the VIP and services to
+  # ip: "10.20.x.x"          # (Optional) Auto-discovered from network_interface if left blank
+
+# -----------------------------------------------------------------------------
+# 3. HMC CREDENTIALS
+# -----------------------------------------------------------------------------
+hmc:
+  ip: "192.168.100.10"
+  username: "hscroot"
+  password: "YOUR_HMC_PASSWORD"
+
+# -----------------------------------------------------------------------------
+# 4. NETWORK CONFIGURATION
+# -----------------------------------------------------------------------------
+network:
+  loadbalancer_ip: "192.168.100.50"      # The VIP for your cluster API and Ingress
+  machine_network_cidr: "192.168.100.0/24" 
+  gateway: "192.168.100.1"
+  # nameserver: "8.8.8.8"              # (Optional) Provide only if managed_services.dns is false
+  dns_forwarders:                      # Upstream DNS for internet resolution
+    - "8.8.8.8"
+    - "1.1.1.1"
+
+# -----------------------------------------------------------------------------
+# 5. OPENSHIFT CLUSTER SETTINGS
+# -----------------------------------------------------------------------------
+openshift:
+  cluster_name: "my-cluster"
+  version: "4.21.18"                   # Supports "4.21" or exact "4.21.14"
+  release_type: "official"             # "official" (signed) or "ci" (nightly builds)
+  base_domain: "example.local"
+  pull_secret_file: "./pull-secret.json"
+  ssh_public_key_file: "~/.ssh/id_rsa.pub"
+  force_ocp_download: false            # Set true to bypass checksums and force re-download of tools
+  # -------------------------------------------------------------------------
+  # INTERNAL NETWORK ROUTING
+  # NOTE: ShiftLaunch automatically uses standard OpenShift internal defaults.
+  # Only uncomment and modify these if they conflict with your corporate network!
+  # -------------------------------------------------------------------------
+  cluster_network_cidr: "10.128.0.0/14"
+  cluster_network_host_prefix: 23
+  service_network: "172.30.0.0/16"
+
+  # -------------------------------------------------------------------------
+  # OPENSHIFT ARTIFACTS (Auto-Discovered)
+  # ShiftLaunch will auto-generate these URLs based on the 'version' field!
+  # You only need to define these if you want to override the download paths.
+  # -------------------------------------------------------------------------
+  ocp_client_config:
+    ocp_client: ""                     # URL to openshift-client-linux.tar.gz
+    client_csum: ""                    # (Optional) Explicit SHA256 hash
+    ocp_installer: ""                  # URL to openshift-install-linux.tar.gz
+    installer_csum: ""                 # (Optional) Explicit SHA256 hash
+    ocp_mirror_client: ""              # URL to oc-mirror.tar.gz
+    mirror_client_csum: ""             # (Optional) Explicit SHA256 hash
+    checksum_url: ""                   # URL to sha256sum.txt manifest
+
+  rhcos_images:
+    kernel_url: ""                     # URL to rhcos-live-kernel-ppc64le
+    kernel_csum: ""                    # (Optional) Explicit SHA256 hash
+    initramfs_url: ""                  # URL to rhcos-live-initramfs.ppc64le.img
+    initramfs_csum: ""                 # (Optional) Explicit SHA256 hash
+    rootfs_url: ""                     # URL to rhcos-live-rootfs.ppc64le.img
+    rootfs_csum: ""                    # (Optional) Explicit SHA256 hash
+    checksum_url: ""                   # URL to sha256sum.txt manifest
+
+# -----------------------------------------------------------------------------
+# 6. DISCONNECTED / AIRGAP CONFIGURATION
+# -----------------------------------------------------------------------------
+disconnected:
+  enabled: false
+  # auto_mirror: true                    # Auto-sync payloads (Forced true if registry is managed)
+  # registry_hostname: "registry.example.com" # Required ONLY if bringing your own external registry
+  # registry_username: "admin"           # Auth for managed registry
+  # registry_password: "admin"           # Auth for managed registry
+  # registry_ca_file: "/path/ca.crt"   # Provide if using a self-signed external registry
+  
+  # Advanced Overrides (Auto-filled by ShiftLaunch)
+  # registry_image: "docker.io/library/registry:3.1.1"
+  # release_image: "quay.io/openshift-release-dev/ocp-release:4.21.0-ppc64le"
+  # local_repo: "ocp4/openshift4"
+
+# -----------------------------------------------------------------------------
+# 7. EXTERNAL PROXY CONFIGURATION
+# Use this if you have an existing corporate proxy (instead of the managed Squid)
+# -----------------------------------------------------------------------------
+external_proxy:
+  # http_proxy: "http://corp-proxy.example.com:8080"
+  # https_proxy: "http://corp-proxy.example.com:8080"
+  # no_proxy: "127.0.0.1,localhost,.example.local,192.168.100.0/24"
+
+# -----------------------------------------------------------------------------
+# 8. NODE TOPOLOGY (HMC Target LPARs)
+# -----------------------------------------------------------------------------
+nodes:
+  boot_method: "agent"                 # Options: "agent" or "netboot"
+  
+  # SINGLE NODE OPENSHIFT (SNO)
+  # Uncomment this block and delete bootstrap/masters/workers to deploy SNO
+  # sno:
+  #   - name: "sno-0"
+  #     ip: "192.168.100.11"
+  #     existing_lpar_name: "my-sno-lpar"
+  #     system_name: "Power-System-9080-HEX"
+  #     mac_address: ""                # (Optional) ShiftLaunch auto-discovers this from HMC
+
+  # MULTI-NODE: BOOTSTRAP (Required ONLY for "netboot", ignore for "agent")
+  # bootstrap:
+  #   - name: "bootstrap"
+  #     ip: "192.168.100.11"
+  #     existing_lpar_name: "my-bootstrap-lpar"
+  #     system_name: "Power-System-9080-HEX"
+
+  masters:
+    - name: "master-0"
+      ip: "192.168.100.12"
+      existing_lpar_name: "my-master-0"
+      system_name: "Power-System-1080-HEX"
+      # mac_address: "A2:28:75:BB:B0:02" # (Optional) Override HMC discovery
+    - name: "master-1"
+      ip: "192.168.100.13"
+      existing_lpar_name: "my-master-1"
+      system_name: "Power-System-9080-HEX"
+    - name: "master-2"
+      ip: "192.168.100.14"
+      existing_lpar_name: "my-master-2"
+      system_name: "Power-System-1180-HEX"
+
+  workers:
+    - name: "worker-0"
+      ip: "192.168.100.15"
+      existing_lpar_name: "my-worker-0"
+      system_name: "Power-System-1022-HEX"
+    - name: "worker-1"
+      ip: "192.168.100.16"
+      existing_lpar_name: "my-worker-1"
+      system_name: "Power-System-1122-HEX"

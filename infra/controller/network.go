@@ -37,7 +37,7 @@ func NewNetworkManager(executor *localexec.LocalClient, debug bool, log *logger.
 
 // AddVIPAlias appends a secondary IP to the EXISTING connection profile via nmcli
 func (nm *NetworkManager) AddVIPAlias(ctx context.Context,iface, ip, cidr string) error {
-	// CRITICAL: Shield from cancellation so the VIP doesn't get orphaned in the NM profile without being activated!
+	// Shield from cancellation so the VIP doesn't get orphaned in the NM profile without being activated!
 	shieldedCtx := context.WithoutCancel(ctx)
 	
 	prefix := ExtractCIDRPrefix(cidr)
@@ -228,7 +228,7 @@ func (nm *NetworkManager) AddHostsEntry(ctx context.Context, clusterName, baseDo
 	// Clean up any stale entries first (this is internally shielded now)
 	nm.RemoveHostsEntry(ctx, clusterName)
 
-	// CRITICAL: Shield from cancellation! Writing to /etc/hosts must never be aborted.
+	// Shield from cancellation! Writing to /etc/hosts must never be aborted.
 	shieldedCtx := context.WithoutCancel(ctx)
 
 	// Append the new entry
@@ -239,7 +239,7 @@ func (nm *NetworkManager) AddHostsEntry(ctx context.Context, clusterName, baseDo
 
 // RemoveHostsEntry safely removes the cluster's specific API endpoints from the hosts file
 func (nm *NetworkManager) RemoveHostsEntry(ctx context.Context, clusterName string) error {
-	// CRITICAL: Shield from cancellation! Killing sed -i mid-execution will
+	// Shield from cancellation! Killing sed -i mid-execution will
 	// permanently destroy the OS /etc/hosts file!
 	shieldedCtx := context.WithoutCancel(ctx)
 	

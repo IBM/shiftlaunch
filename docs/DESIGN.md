@@ -1,4 +1,4 @@
-# 🎯 ShiftLaunch: Software Design Document
+# ShiftLaunch: Software Design Document
 
 **Version:** 3.0 (Greenfield Architecture)
 **System:** IBM Power Systems (ppc64le)
@@ -19,7 +19,16 @@ The tool supports deploying both Single-Node OpenShift (SNO) and highly-availabl
 - **`status`**: Displays credentials, endpoints, and `/etc/hosts` entries directly from the local workspace.
 - **`list`**: Provides a tabular view of all managed clusters.
 
----
+### Example Configurations
+ShiftLaunch provides pre-configured example YAML files in the [`example/`](../example) directory to help you get started quickly:
+- [`config.yaml`](../example/config.yaml): Basic multi-node configuration template
+- [`config-sno.yaml`](../example/config-sno.yaml): Single-Node OpenShift (SNO) example
+- [`config-disc-agent.yaml`](../example/config-disc-agent.yaml): Disconnected deployment with Agent-based installer
+- [`config-multi-netboot.yaml`](../example/config-multi-netboot.yaml): Multi-node cluster with traditional network boot
+
+These examples demonstrate different deployment scenarios and can be used as starting points for your own configurations.
+
+\---
 
 ## 2. Core Architecture
 

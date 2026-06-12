@@ -206,7 +206,7 @@ func generateInstallConfigYAML(cfg *types.AgentConfig, workspaceDir string) (str
 	pullSecret, _ := os.ReadFile(pullSecretPath)
 	sshKey, _ := os.ReadFile(os.ExpandEnv(strings.ReplaceAll(cfg.OpenShift.SSHPublicKeyFile, "~", "$HOME")))
 
-	// --- FIX: Dynamic Worker Replica Assignment based on Boot Method ---
+	// ---  Dynamic Worker Replica Assignment based on Boot Method ---
 	workerReplicas := 0
 	if cfg.Nodes.BootMethod == "agent" {
 		workerReplicas = len(cfg.Nodes.Workers)

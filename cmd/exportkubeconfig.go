@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -192,25 +193,27 @@ func modifyContextName(kubeconfig *KubeconfigStructure, newContextName string) {
 }
 
 // resolveDestinationPath determines the kubeconfig destination path
-// Priority: flag > $KUBECONFIG > $HOME/.kube/config
+// Priority: flag > $HOME/.kube/config (Ignores $KUBECONFIG to prevent corruption)
 func resolveDestinationPath(kubeconfigFlag string) (string, error) {
 	// Priority 1: Use flag value if provided
 	if kubeconfigFlag != "" {
 		return kubeconfigFlag, nil
 	}
 
-	// Priority 2: Use $KUBECONFIG environment variable if set
-	if envPath := os.Getenv("KUBECONFIG"); envPath != "" {
-		return envPath, nil
-	}
-
-	// Priority 3: Use default $HOME/.kube/config
+	// Priority 2: Force default $HOME/.kube/config
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
+	
+	dest := filepath.Join(homeDir, ".kube", "config")
 
-	return filepath.Join(homeDir, ".kube", "config"), nil
+	// Guardrail: Ensure we still never accidentally overwrite a workspace
+	if strings.HasPrefix(filepath.Clean(dest), "/opt/shiftlaunch/clusters/") {
+		return "", fmt.Errorf("refusing to merge into a managed cluster workspace (%s)", dest)
+	}
+
+	return dest, nil
 }
 
 // readExistingKubeconfig reads an existing kubeconfig file if it exists

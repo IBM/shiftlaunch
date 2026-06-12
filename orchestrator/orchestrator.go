@@ -69,7 +69,7 @@ func (o *Orchestrator) GetDebug() bool {
 
 // saveState records phase completion to the local state.json file
 func (o *Orchestrator) saveState(phase string) {
-	// --- CRITICAL FIX: Sync completely instead of manually copying specific fields ---
+	// --- CRITICAL  Sync completely instead of manually copying specific fields ---
 	if currentState, err := o.stateManager.LoadState(); err == nil && currentState != nil {
 		o.state = currentState 
 	}
@@ -150,7 +150,7 @@ func (o *Orchestrator) endPhase(phaseExec *types.PhaseExecution, err error) {
 		phaseExec.Status = "success"
 	}
 	
-	// --- CRITICAL FIX: Sync in-memory state with the disk to preserve provider updates ---
+	// --- CRITICAL  Sync in-memory state with the disk to preserve provider updates ---
 	if currentState, loadErr := o.stateManager.LoadState(); loadErr == nil && currentState != nil {
 		o.state = currentState 
 	}
@@ -306,7 +306,7 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 	// --- PHASE 2: DOWNLOADS ---
 	needsDownloads := !resume || !contains(o.state.CompletedPhases, "downloads")
 
-	// --- FIX: LBYL Safety Check for Missing Binaries ---
+	// ---  LBYL Safety Check for Missing Binaries ---
 	if !needsDownloads {
 		installerPath := filepath.Join(o.workspaceDir, "tools", "openshift-install")
 		if _, err := os.Stat(installerPath); os.IsNotExist(err) {
@@ -543,7 +543,7 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 			} else {
 				o.trackServiceEnd(hostsSvc, nil, "Added cluster API to /etc/hosts for local resolution")
 				
-				// THE FIX: Force Squid to flush its cache and learn the new OpenShift API routes!
+				//  Force Squid to flush its cache and learn the new OpenShift API routes!
 				if o.cfg.ManagedServices.Proxy {
 					_ = o.executor.SystemctlRestart(ctx, "squid")
 					o.logger.Debug("Reloaded Squid proxy to register new API routing")
@@ -630,7 +630,7 @@ o.logger.Debug("Starting ShiftLaunch Local Agent Orchestration...", "cluster", o
 						phaseErr = fmt.Errorf("failed to setup NFS server: %w", err)
 						return
 					}
-					// THE FIX: Point the log message to the actual exported directory
+					//  Point the log message to the actual exported directory
 					exportPath := filepath.Join(o.workspaceDir, "install-dir")
 					o.trackServiceEnd(nfsSvc, nil, fmt.Sprintf("NFS export configured: %s", exportPath))
 				} else {
@@ -757,6 +757,46 @@ func (o *Orchestrator) GetClusterStatus(ctx context.Context) string {
 
 	summaryTable, _ := pterm.DefaultTable.WithData(summaryData).Srender()
 	sb.WriteString(summaryTable)
+
+	// ---INFRASTRUCTURE & SERVICES ---
+	sb.WriteString(pterm.Cyan("\n◉ INFRASTRUCTURE & SERVICES\n"))
+	
+	// Format managed services list (Boot-Method Aware)
+	var activeServices []string
+	if o.cfg.ManagedServices.DNS { activeServices = append(activeServices, "DNS") }
+	if o.cfg.ManagedServices.DHCP && o.cfg.Nodes.BootMethod != "agent" { activeServices = append(activeServices, "DHCP") }
+	if o.cfg.ManagedServices.PXE && o.cfg.Nodes.BootMethod != "agent" { activeServices = append(activeServices, "PXE") }
+	if o.cfg.ManagedServices.LoadBalancer { activeServices = append(activeServices, "HAProxy") }
+	if o.cfg.ManagedServices.NFS && o.cfg.Nodes.BootMethod == "agent" { activeServices = append(activeServices, "NFS") }
+	
+	managedStr := "None"
+	if len(activeServices) > 0 {
+		managedStr = strings.Join(activeServices, ", ")
+	}
+
+	// Format Proxy
+	proxyStr := "None"
+	if o.cfg.ManagedServices.Proxy {
+		proxyStr = fmt.Sprintf("Managed Squid Proxy (http://%s:3128)", o.cfg.Controller.IP)
+	} else if o.cfg.ExternalProxy.HTTPProxy != "" {
+		proxyStr = fmt.Sprintf("External (%s)", o.cfg.ExternalProxy.HTTPProxy)
+	}
+
+	// Format Registry
+	registryStr := "Official Red Hat Upstream"
+	if o.cfg.ManagedServices.Registry {
+		registryStr = fmt.Sprintf("Managed Local Registry (%s:5000)", o.cfg.Controller.IP)
+	} else if o.cfg.DisconnectedConfig.Enabled {
+		registryStr = fmt.Sprintf("External Airgap Registry (%s)", o.cfg.DisconnectedConfig.RegistryHostname)
+	}
+
+	infraData := pterm.TableData{
+		{"Controller Managed:", managedStr},
+		{"Proxy Gateway:", proxyStr},
+		{"Container Registry:", registryStr},
+	}
+	infraTable, _ := pterm.DefaultTable.WithData(infraData).Srender()
+	sb.WriteString(infraTable)
 
 	// --- 2. CLUSTER NODES ---
 	if len(state.DiscoveredNodes) > 0 {

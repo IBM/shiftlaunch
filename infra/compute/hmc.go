@@ -490,7 +490,7 @@ func (h *HMCProvider) networkBootLpar(ctx context.Context, node *types.NodeConfi
 	h.logger.Info("Network boot initiated successfully", "lpar", node.ExistingLPARName, "status", status)
 
 	h.logger.Info("Saving profile to persist configuration...")
-	// CRITICAL: Shield from cancellation to prevent profile corruption
+	// Shield from cancellation to prevent profile corruption
 	_ = h.hmcClient.SaveCurrentLparConfig(context.WithoutCancel(ctx), node.UUID, "default_profile", true, true)
 
 	return nil
@@ -662,7 +662,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 
 	// Step 2: Ensure viosadmin user exists (required for VIOS operations)
 	h.logger.Info("Checking viosadmin user on HMC")
-	// CRITICAL: Shield from cancellation to prevent partially created VIOS admin account
+	// Shield from cancellation to prevent partially created VIOS admin account
 	viosUsername, viosPassword, viosUserCreated, err := h.hmcClient.EnsureVIOSAdminUser(context.WithoutCancel(ctx), h.cfg.HMC.Username, h.cfg.HMC.Password, h.debug)
 	if err != nil {
 		return fmt.Errorf("failed to ensure viosadmin user: %w", err)
@@ -753,7 +753,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	// ========================================================================
 	// STEP 6: MOUNT NFS IF NOT ALREADY MOUNTED (SHARED MOUNT PER VIOS)
 	// ========================================================================
-	// THE FIX: Dynamically discover the Management IP that can route to the VIOS
+	//  Dynamically discover the Management IP that can route to the VIOS
 	nfsServer := h.cfg.Controller.IP
 	if conn, err := net.Dial("udp", h.cfg.HMC.IP+":443"); err == nil {
 		nfsServer = conn.LocalAddr().(*net.UDPAddr).IP.String()
@@ -777,7 +777,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 		var mountErr error
 		maxRetries := 3
 		for i := 0; i < maxRetries; i++ {
-			// CRITICAL: Shield from cancellation to prevent locked VIOS mount daemon
+			// Shield from cancellation to prevent locked VIOS mount daemon
 			_, mountErr = hmc.MountNFS(context.WithoutCancel(ctx), h.hmcClient, node.SystemName, viosName, nfsServer, exportPath, mountPoint, "3", h.debug)
 			if mountErr == nil || strings.Contains(mountErr.Error(), "already mounted") {
 				mountErr = nil
@@ -869,7 +869,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	time.Sleep(3 * time.Second)
 
 	// Use CreateVirtualOpticalMedia with read-only flag
-	// CRITICAL: Shield from cancellation - 1GB ISO transfer must complete to prevent VIOS corruption
+	// Shield from cancellation - 1GB ISO transfer must complete to prevent VIOS corruption
 	err = h.hmcClient.CreateVirtualOpticalMedia(
 		context.WithoutCancel(ctx), // ctx - shielded from cancellation
 		node.SystemName,            // sysName
@@ -917,7 +917,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	// Clean up any stale media mapped to this LPAR before inserting the new one
 	if len(mediaToUnmap) > 0 {
 		h.logger.Info("Found stale optical media mapped to LPAR. Unmapping...", "lpar", node.ExistingLPARName, "stale_media", mediaToUnmap)
-		// CRITICAL: Shield from cancellation to prevent orphaned vSCSI adapters
+		// Shield from cancellation to prevent orphaned vSCSI adapters
 		_, err = h.hmcClient.DeleteVirtualOpticalMaps(context.WithoutCancel(ctx), sysUUID, viosUUID, node.UUID, mediaToUnmap, h.debug)
 		if err != nil {
 			h.logger.Warn("Failed to unmap stale media. The mapping step may fail.", "error", err)
@@ -932,7 +932,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	} else {
 		h.logger.Info("Mapping optical media to LPAR", "lpar", node.ExistingLPARName, "media", mediaName)
 
-		// CRITICAL: Shield from cancellation to prevent orphaned vSCSI adapters
+		// Shield from cancellation to prevent orphaned vSCSI adapters
 		_, err = h.hmcClient.CreateVirtualOpticalMaps(context.WithoutCancel(ctx), sysUUID, viosUUID, node.UUID, []string{mediaName}, h.debug)
 		if err != nil {
 			return fmt.Errorf("failed to map optical media: %w", err)
@@ -998,7 +998,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	profileName := "default_profile"
 	h.logger.Info("Saving partition profile", "profile", profileName)
 
-	// CRITICAL: Shield from cancellation to prevent profile corruption
+	// Shield from cancellation to prevent profile corruption
 	err = h.hmcClient.SaveCurrentLparConfig(context.WithoutCancel(ctx), node.UUID, profileName, true, h.debug)
 	if err != nil {
 		return fmt.Errorf("failed to save partition profile: %w", err)
@@ -1009,7 +1009,7 @@ func (h *HMCProvider) bootNodeWithISO(ctx context.Context, node *types.NodeConfi
 	// ========================================================================
 	h.logger.Info("Setting Pending Boot String to 'cd/dvd-all'...")
 
-	// CRITICAL: Shield from cancellation to prevent boot definition corruption
+	// Shield from cancellation to prevent boot definition corruption
 	err = h.hmcClient.SetPartitionBootString(context.WithoutCancel(ctx), node.UUID, "cd/dvd-all", h.debug)
 	if err != nil {
 		h.logger.Warn("Failed to set boot string (may require manual SMS boot)", "error", err)
@@ -1146,11 +1146,11 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 		h.viosMounted = make(map[string]bool)
 	}
 
-	// 🛡️ NEW: Track ISO creation to share a single media file across all LPARs!
+	// 🛡️Track ISO creation to share a single media file across all LPARs!
 	viosMediaCreated := make(map[string]string)
 	viosMediaUploaded := make(map[string]bool)
 
-	// --- THE FIX: Generate a unique batch hash so Day-2 scaling doesn't collide with Day-1 ISOs! ---
+	// ---  Generate a unique batch hash so Day-2 scaling doesn't collide with Day-1 ISOs! ---
 	batchHash := fmt.Sprintf("%x", time.Now().Unix()%0xFFFFF)
 
 	// bulkMap Structure: map[sysUUID]map[viosUUID]map[lparUUID][]string
@@ -1206,7 +1206,7 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 			}
 		}
 
-		// --- THE FIX: Apply the unique batch hash to the ISO name ---
+		// ---  Apply the unique batch hash to the ISO name ---
 		if mediaName == "" {
 			if existingMedia, ok := viosMediaCreated[viosUUID]; ok {
 				mediaName = existingMedia
@@ -1234,7 +1234,7 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 
 		// Ensure NFS is Mounted on VIOS
 		if !h.viosMounted[viosUUID] {
-			// THE FIX: Dynamically discover the Management IP that can route to the VIOS
+			//  Dynamically discover the Management IP that can route to the VIOS
 			nfsServer := h.cfg.Controller.IP
 			if conn, err := net.Dial("udp", h.cfg.HMC.IP+":443"); err == nil {
 				nfsServer = conn.LocalAddr().(*net.UDPAddr).IP.String()
@@ -1259,7 +1259,7 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 			return fmt.Errorf("failed to ensure media repository: %w", err)
 		}
 
-		// 🛡️ FIX: Copy the ISO File to the VIOS locally (ONLY ONCE PER VIOS!)
+		// 🛡️  Copy the ISO File to the VIOS locally (ONLY ONCE PER VIOS!)
 		if !viosMediaUploaded[viosUUID] {
 			isoPath := fmt.Sprintf("%s/agent.ppc64le.iso", mountPoint)
 			h.logger.Info("Uploading ISO to VIOS repository (this copies ~1GB and may take a few minutes)...", "iso", isoPath)
@@ -1359,7 +1359,7 @@ func (h *HMCProvider) bootNodesWithISOBulk(ctx context.Context) error {
 		}
 
 		h.logger.Info("Unmounting NFS from VIOS", "vios", h.isoMappings[i].VIOSName, "mount", mp)
-		// CRITICAL: Shield from cancellation so we don't leave the VIOS hanging!
+		// Shield from cancellation so we don't leave the VIOS hanging!
 		_, err := hmc.UnmountNFS(context.WithoutCancel(ctx), h.hmcClient, h.isoMappings[i].SystemName, h.isoMappings[i].VIOSName, mp, h.debug)
 		
 		if err != nil && !strings.Contains(err.Error(), "Could not find anything to unmount") && !strings.Contains(err.Error(), "not mounted") {
@@ -1487,7 +1487,7 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 	} else {
 		var created bool
 		var apiErr error // Fixed: explicit declaration prevents undefined 'err'
-		// CRITICAL: Shield from cancellation to prevent partially created VIOS admin account
+		// Shield from cancellation to prevent partially created VIOS admin account
 		viosUsername, viosPassword, created, apiErr = h.hmcClient.EnsureVIOSAdminUser(context.WithoutCancel(ctx), h.cfg.HMC.Username, h.cfg.HMC.Password, h.debug)
 		if apiErr != nil || viosPassword == "" {
 			h.logger.Warn("Failed to get viosadmin credentials via API, falling back to default", "error", apiErr)
@@ -1569,7 +1569,7 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 	// 1. DELETE VIRTUAL OPTICAL MEDIA (Per-Node Media)
 	// ========================================================================
 	
-	// 🛡️ FIX: Deduplicate media deletion so we don't try to delete the shared ISO multiple times!
+	// 🛡️  Deduplicate media deletion so we don't try to delete the shared ISO multiple times!
 	mediaDeleted := make(map[string]bool)
 
 	for _, mapping := range h.isoMappings {
@@ -1583,12 +1583,12 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 
 		h.logger.Info(fmt.Sprintf("Checking repository for media: %s", mapping.MediaName))
 
-		// CRITICAL: Shield prerequisite lookup - teardown must not bypass deletion!
+		// Shield prerequisite lookup - teardown must not bypass deletion!
 		_, err := h.hmcClient.GetVirtualOpticalMedia(context.WithoutCancel(ctx), mapping.SystemName, mapping.VIOSName, mapping.MediaName, h.debug)
 
 		if err == nil {
 			h.logger.Info(fmt.Sprintf("Destroying optical payload: %s", mapping.MediaName))
-			// CRITICAL: Shield from cancellation - 1GB file deletion must complete to prevent VIOS filesystem corruption
+			// Shield from cancellation - 1GB file deletion must complete to prevent VIOS filesystem corruption
 			delErr := h.hmcClient.DeleteVirtualOpticalMedia(
 				context.WithoutCancel(ctx),
 				mapping.SystemName,
@@ -1628,7 +1628,7 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 
 		h.logger.Info("Unmounting shared NFS from VIOS...", "mount_point", mapping.MountPoint, "vios", mapping.VIOSName)
 
-		// CRITICAL: Shield from cancellation to prevent locked VIOS mount daemon
+		// Shield from cancellation to prevent locked VIOS mount daemon
 		_, err := hmc.UnmountNFS(context.WithoutCancel(ctx), h.hmcClient, mapping.SystemName, mapping.VIOSName, mapping.MountPoint, h.debug)
 
 		if err != nil && (strings.Contains(err.Error(), "Could not find anything to unmount") || strings.Contains(err.Error(), "not mounted")) {
@@ -1673,7 +1673,7 @@ func (h *HMCProvider) CleanupISOMappings(ctx context.Context) error {
 func (h *HMCProvider) ensureMediaRepository(ctx context.Context, systemName, viosUUID, viosName string) error {
 	repoInfo, err := h.hmcClient.GetMediaRepositoryInfo(ctx, systemName, viosName, h.debug)
 	
-	// FIX: The HMC API can return success (err == nil) but SizeMB = 0 if the repository isn't created,
+	//  The HMC API can return success (err == nil) but SizeMB = 0 if the repository isn't created,
 	// OR it can return an error if the repository doesn't exist. Handle both cases.
 	if err == nil && repoInfo.SizeMB > 0 {
 		h.logger.Debug("Media Repository already exists", "vios", viosName, "size_mb", repoInfo.SizeMB)
@@ -1729,9 +1729,9 @@ func (h *HMCProvider) ensureMediaRepository(ctx context.Context, systemName, vio
 	}
 
 	h.logger.Info("Creating Media Repository", "size_mb", requiredMB, "vg", targetVG)
-	// CRITICAL: Shield from cancellation - modifying VIOS Volume Group must complete to prevent corruption
+	// Shield from cancellation - modifying VIOS Volume Group must complete to prevent corruption
 	if createErr := h.hmcClient.CreateMediaRepository(context.WithoutCancel(ctx), systemName, viosUUID, viosName, targetVG, requiredMB, h.debug); createErr != nil {
-		// FIX: If repository already exists, that's actually OK - just log and continue
+		//  If repository already exists, that's actually OK - just log and continue
 		if strings.Contains(createErr.Error(), "already exists") {
 			h.logger.Info("Media Repository already exists (detected during creation attempt)", "vios", viosName)
 			return nil

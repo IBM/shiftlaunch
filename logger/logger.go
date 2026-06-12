@@ -186,8 +186,8 @@ func (l *Logger) StartPhase(msg string) {
 		_ = l.activeSpinner.Stop()
 	}
 
-	// 1. THE STREAM SYNC FIX: Explicitly map to Stderr
-	// 2. THE CLEANUP FIX: Force the thread to erase itself when stopped
+	// 1. THE STREAM SYNC  Explicitly map to Stderr
+	// 2. THE CLEANUP  Force the thread to erase itself when stopped
 	spinner, _ := pterm.DefaultSpinner.
 		WithWriter(os.Stderr).
 		WithRemoveWhenDone(true).
@@ -195,7 +195,7 @@ func (l *Logger) StartPhase(msg string) {
 		
 	l.activeSpinner = spinner
 
-	// 3. THE THREAD RACE FIX: Yield to the Go scheduler!
+	// 3.   Yield to the Go scheduler!
 	// Archiving takes <1ms. We MUST pause for a tiny fraction of a second to guarantee
 	// the background thread wakes up and stabilizes before EndPhase tries to kill it!
 	time.Sleep(10 * time.Millisecond)

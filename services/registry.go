@@ -124,7 +124,7 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 	username := r.cfg.DisconnectedConfig.RegistryUsername
 	password := r.cfg.DisconnectedConfig.RegistryPassword
 	
-	// THE FIX: Use -c to create only if the file doesn't exist. Otherwise, just append/update!
+	//  Use -c to create only if the file doesn't exist. Otherwise, just append/update!
 	authFlag := "-bBc"
 	if _, err := r.executor.Execute(shieldedCtx, "test -f /opt/registry/auth/htpasswd"); err == nil {
 		authFlag = "-bB"
@@ -144,7 +144,7 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 	}
 
 	// =========================================================
-	// THE FIX: Move Firewall Configuration BEFORE starting Podman
+	//  Move Firewall Configuration BEFORE starting Podman
 	// =========================================================
 	r.logger.Debug("Configuring firewall for registry...")
 	if _, err := r.executor.Execute(shieldedCtx, "sudo firewall-cmd --permanent --add-port=5000/tcp"); err != nil {
@@ -161,7 +161,7 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 	} else {
 		r.logger.Debug("Starting fresh local registry service...")
 		
-		// THE FIX: Only write the systemd file if we are actually creating the registry!
+		//  Only write the systemd file if we are actually creating the registry!
 		tmpl, err := template.New("registry-service").Parse(registryServiceTemplate)
 		if err == nil {
 			var buf bytes.Buffer
@@ -184,22 +184,25 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 
 	// 7. Ensure the Controller can resolve the registry hostname locally
 	r.logger.Debug("Injecting registry hostname into local /etc/hosts for resolution...")
-	hostsEntry := fmt.Sprintf("%s %s", r.cfg.Controller.IP, registryHost)
 	
-	// Clean up any stale entries first, then append
-	r.executor.Execute(shieldedCtx, fmt.Sprintf("sudo sed -i '/%s/d' /etc/hosts", registryHost))
+	// ---  Use a strict, cluster-specific marker to prevent wiping out the Controller IP ---
+	marker := fmt.Sprintf("# ShiftLaunch-Registry: %s", r.cfg.OpenShift.ClusterName)
+	hostsEntry := fmt.Sprintf("%s %s %s", r.cfg.Controller.IP, registryHost, marker)
+	
+	// Clean up any stale entries first (using the precise marker), then append
+	r.executor.Execute(shieldedCtx, fmt.Sprintf("sudo sed -i '/%s/d' /etc/hosts", marker))
 	r.executor.Execute(shieldedCtx, fmt.Sprintf("echo '%s' | sudo tee -a /etc/hosts > /dev/null", hostsEntry))
 
 	// 8. Wait for registry to be ready
 	r.logger.Debug("Waiting for registry to be ready...")
 	
-	// THE FIX: Explicitly target 127.0.0.1 (IPv4), strip all proxies, and add strict timeouts to prevent network namespace settling delays
+	//  Explicitly target 127.0.0.1 (IPv4), strip all proxies, and add strict timeouts to prevent network namespace settling delays
 	checkCmd := fmt.Sprintf("env HTTP_PROXY='' HTTPS_PROXY='' http_proxy='' https_proxy='' curl --connect-timeout 5 --max-time 10 -u %s:%s -k https://127.0.0.1:5000/v2/_catalog", username, password)
 	
 	var lastErr error
 	for i := 0; i < 10; i++ {
 		if _, err := r.executor.Execute(shieldedCtx, checkCmd); err == nil {
-			lastErr = nil // THE FIX: Clear the sticky error before breaking!
+			lastErr = nil //  Clear the sticky error before breaking!
 			break
 		} else {
 			lastErr = err
@@ -214,7 +217,7 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 	// 9. Update pull secret with local registry credentials
 	r.logger.Info("Updating pull secret with local registry authentication...")
 	
-	// FIX: Use the actual source file from the config!
+	//  Use the actual source file from the config!
 	pullSecretPath := os.ExpandEnv(strings.ReplaceAll(r.cfg.OpenShift.PullSecretFile, "~", "$HOME"))
 	updatedSecretPath := filepath.Join(workspaceDir, "pull-secret-updated.json")
 	
@@ -333,6 +336,27 @@ mirror:
 	imageSetPath := filepath.Join(workspaceDir, "imageset-config.yaml")
 	os.WriteFile(imageSetPath, []byte(imageSetYaml), 0644)
 
+	// --- THE MULTI-TENANT FIX ---
+	
+	// 1. The Scalpel: Only kill zombie processes tied to THIS specific cluster's workspace
+	r.logger.Debug("Sweeping for orphaned oc-mirror processes tied to this cluster...")
+	targetKillCmd := fmt.Sprintf("sudo pkill -9 -f 'oc-mirror.*%s' 2>/dev/null || true", r.cfg.OpenShift.ClusterName)
+	r.executor.Execute(ctx, targetKillCmd)
+
+	// 2. The Queue: oc-mirror v2 hardcodes port 55000. If it's in use by another cluster, we must wait.
+	for i := 0; i < 60; i++ { // Wait up to 30 minutes
+		out, _ := r.executor.Execute(ctx, "ss -tln | grep ':55000 ' 2>/dev/null || true")
+		if strings.TrimSpace(out) == "" {
+			break // Port is free, we can proceed!
+		}
+		if i == 0 {
+			r.logger.Info("Another cluster is currently mirroring images (Port 55000 is locked). Waiting in queue...")
+		} else if i%10 == 0 {
+			r.logger.Info("Still waiting for port 55000 to become available...")
+		}
+		r.executor.Execute(ctx, "sleep 30")
+	}
+
 	// Execute v2 mirror logic
 	mirrorCmd := fmt.Sprintf(`cd %s && unset REGISTRY_AUTH_FILE && %s --v2 --config=imageset-config.yaml --authfile=%s --workspace file://%s/oc-mirror-workspace docker://%s/%s --dest-tls-verify=false`,
 		workspaceDir, ocMirrorPath, pullSecretPath, workspaceDir, registryURL, localRepo)
@@ -364,7 +388,7 @@ mirror:
 
 // getRegistryHost returns the hostname or IP address for the registry based on configuration
 func (r *RegistryManager) getRegistryHost() string {
-	// THE FIX: For locally managed shared registries, the IP is the safest multi-tenant
+	//  For locally managed shared registries, the IP is the safest multi-tenant
 	// identifier because it is permanently baked into the shared certificate's SAN!
 	if r.cfg.ManagedServices.Registry {
 		return r.cfg.Controller.IP
@@ -389,7 +413,7 @@ func (r *RegistryManager) GetCertificatePath() string {
 
 // Cleanup removes the registry service and configuration ONLY if no other clusters are using it
 func (r *RegistryManager) Cleanup(ctx context.Context) error {
-	// THE FIX: Check for multi-tenancy before nuking the registry!
+	//  Check for multi-tenancy before nuking the registry!
 	if r.isRegistryShared() {
 		r.logger.Info("Local registry is actively being used by other managed clusters. Bypassing registry teardown.")
 		return nil
@@ -416,7 +440,7 @@ func (r *RegistryManager) Cleanup(ctx context.Context) error {
 
 // isRegistryShared checks if other managed clusters are currently using the local registry
 func (r *RegistryManager) isRegistryShared() bool {
-	// THE FIX: Use the dynamic workspace directory instead of hardcoding /opt/shiftlaunch
+	//  Use the dynamic workspace directory instead of hardcoding /opt/shiftlaunch
 	workspaceParent := filepath.Dir(r.workspaceDir)
 	
 	entries, err := os.ReadDir(workspaceParent)
@@ -450,7 +474,7 @@ func (r *RegistryManager) isRegistryShared() bool {
 		// Parse the config to see if it relies on the managed registry
 		var tmpCfg types.AgentConfig
 		if err := yaml.Unmarshal(data, &tmpCfg); err == nil {
-			// THE FIX: Look exclusively at the Registry service toggle to prevent
+			//  Look exclusively at the Registry service toggle to prevent
 			// unoptimized config files from being skipped!
 			if tmpCfg.ManagedServices.Registry {
 				activeCount++

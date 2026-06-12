@@ -172,7 +172,7 @@ func (m *DNSmasqManager) SetupServices(ctx context.Context) error {
 
 // ConfigurePXEBoot handles the physical artifacts: grub2 structure, core.elf, images, and grub configs
 func (m *DNSmasqManager) ConfigurePXEBoot(ctx context.Context, workspaceDir string) error {
-	// CRITICAL: Shield from cancellation! Truncated boot files in TFTP
+	// Shield from cancellation! Truncated boot files in TFTP
 	// will cause immediate IBM Power LPAR Kernel Panics on boot!
 	shieldedCtx := context.WithoutCancel(ctx)
 

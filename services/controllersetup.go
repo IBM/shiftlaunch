@@ -36,7 +36,7 @@ func (c *ControllerSetup) getRequiredPackages() []string {
 	// We always need firewalld for port management
 	pkgs = append(pkgs, "firewalld", "policycoreutils-python-utils", "tar")
 
-	// THE FIX: Inject registry dependencies for disconnected deployments!
+	//  Inject registry dependencies for disconnected deployments!
 	if c.cfg.DisconnectedConfig.Enabled && c.cfg.ManagedServices.Registry {
 		pkgs = append(pkgs, "podman", "httpd-tools", "jq", "openssl")
 	}
@@ -79,7 +79,7 @@ func (c *ControllerSetup) InstallPackages(ctx context.Context) error {
 	pkgs := c.getRequiredPackages()
 	c.logger.Info("Installing required local packages...", "packages", strings.Join(pkgs, ", "))
 
-	// CRITICAL: Shield from cancellation! Killing dnf mid-transaction corrupts the local
+	// Shield from cancellation! Killing dnf mid-transaction corrupts the local
 	// RPM database and leaves a permanent /var/lib/rpm/.rpm.lock file that breaks the OS!
 	shieldedCtx := context.WithoutCancel(ctx)
 
@@ -124,7 +124,7 @@ func (c *ControllerSetup) ConfigureFirewall(ctx context.Context) error {
 		services = append(services, "nfs", "rpc-bind", "mountd")
 	}
 
-	// CRITICAL: Shield from cancellation! Killing firewall-cmd mid-execution
+	// Shield from cancellation! Killing firewall-cmd mid-execution
 	// can corrupt the /etc/firewalld/zones/public.xml file, breaking the OS firewall!
 	shieldedCtx := context.WithoutCancel(ctx)
 

@@ -327,7 +327,7 @@ func (h *HTTPServerManager) StageFiles(ctx context.Context,workspaceDir string) 
 	h.logger.Info("Staging artifacts to HTTP directory...", "cluster", h.cfg.OpenShift.ClusterName)
 	httpDir := h.GetClusterHTTPDir()
 
-	// CRITICAL: Shield from cancellation! Truncated rootfs or ignition files
+	// Shield from cancellation! Truncated rootfs or ignition files
 	// hosted by Apache will cause catastrophic OpenShift boot failures!
 	shieldedCtx := context.WithoutCancel(ctx)
 

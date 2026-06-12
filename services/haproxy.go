@@ -132,7 +132,7 @@ func (h *HAProxyGenerator) Generate() (string, error) {
 	
 	// SAFE BOUNDS CHECK: Explicitly verify the slice has elements before accessing index 0
 	if len(cfg.Nodes.SNO) > 0 {
-		// --- FIX: Use a pointer so the modification persists globally ---
+		// ---  Use a pointer so the modification persists globally ---
 		snoNode = &cfg.Nodes.SNO[0]
 		if snoNode.Hostname == "" {
 			snoNode.Hostname = cfg.OpenShift.ClusterName
@@ -205,10 +205,10 @@ func SetupHAProxy(ctx context.Context,cfg *types.AgentConfig, exec *localexec.Lo
 
 	configPath := gen.GetConfigPath(ctx)
 	
-	// NEW: Ensure the HAProxy conf.d directory actually exists before moving files
+	//Ensure the HAProxy conf.d directory actually exists before moving files
 	exec.Execute(ctx,"sudo mkdir -p /etc/haproxy/conf.d")
 	
-	// THE FIX: Nuke the default boilerplate frontend/backends that hog port 5000
+	//  Nuke the default boilerplate frontend/backends that hog port 5000
 	exec.Execute(ctx, "sudo sed -i '/frontend main/,$d' /etc/haproxy/haproxy.cfg")
 	
 	// Write HAProxy configuration locally

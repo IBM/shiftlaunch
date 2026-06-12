@@ -23,7 +23,7 @@ const squidConfTemplate = `# ============================================
 
 # ACLS
 acl localnet src {{.MachineCIDR}}
-acl localnet src {{.ControllerIP}}/32   # THE FIX: Whitelist the Controller node!
+acl localnet src {{.ControllerIP}}/32   #  Whitelist the Controller node!
 
 acl SSL_ports port 443
 acl SSL_ports port 5000         # Local Registry
@@ -89,7 +89,7 @@ func NewSquidManager(cfg *types.AgentConfig, exec *localexec.LocalClient, log *l
 func (s *SquidManager) Setup(ctx context.Context) error {
 	s.logger.Info("Setting up local Squid proxy server...")
 	
-	// CRITICAL: Shield from cancellation to prevent broken RPM databases or half-written firewall rules
+	// Shield from cancellation to prevent broken RPM databases or half-written firewall rules
 	shieldedCtx := context.WithoutCancel(ctx)
 
 	// 1. Install Squid (Ansible: Install Squid package)
@@ -112,7 +112,7 @@ func (s *SquidManager) Setup(ctx context.Context) error {
 	}{
 		ClusterName:  s.cfg.OpenShift.ClusterName,
 		MachineCIDR:  s.cfg.Network.MachineCIDR,
-		ControllerIP: s.cfg.Controller.IP, // THE FIX: Map the IP to the template
+		ControllerIP: s.cfg.Controller.IP, //  Map the IP to the template
 	}
 
 	var buf bytes.Buffer
@@ -143,7 +143,7 @@ func (s *SquidManager) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to reload firewall: %w", err)
 	}
 
-	// CRITICAL: Allow Squid to proxy traffic to OpenShift's non-standard ports (6443, 22623, 5000)
+	// Allow Squid to proxy traffic to OpenShift's non-standard ports (6443, 22623, 5000)
 	if _, err := s.executor.Execute(shieldedCtx, "sudo setsebool -P squid_connect_any 1"); err != nil {
 		s.logger.Warn("Failed to set SELinux boolean squid_connect_any. Proxying to OpenShift API ports may fail.", "error", err)
 	}
@@ -166,7 +166,7 @@ func (s *SquidManager) Setup(ctx context.Context) error {
 
 // Cleanup removes firewall rules and stops the proxy during teardown
 func (s *SquidManager) Cleanup(ctx context.Context) error {
-	// THE FIX: Check for multi-tenancy before knocking the proxy server offline!
+	//  Check for multi-tenancy before knocking the proxy server offline!
 	if s.isProxyShared() {
 		s.logger.Info("Local Squid proxy is actively being used by other managed clusters. Bypassing proxy teardown.")
 		return nil

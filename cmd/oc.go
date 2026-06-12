@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -30,7 +31,7 @@ Example:
 }
 
 func init() {
-	// THE MAGIC FIX: This tells Cobra to stop parsing flags the moment it hits 
+	// This tells Cobra to stop parsing flags the moment it hits 
 	// the first command (like "get" or "debug"). This means flags like "-w" 
 	// will be safely passed to 'oc' instead of breaking ShiftLaunch.
 	ocCmd.Flags().SetInterspersed(false)
@@ -77,10 +78,17 @@ func runOcWrapper(cmd *cobra.Command, args []string) error {
 	// 5. Execute the command interactively
 	ocExec := exec.Command(ocPath, args...)
 	
-	// Inject the kubeconfig into the environment variables
-	ocExec.Env = append(os.Environ(), "KUBECONFIG="+kubeconfigPath)
+	// ---  Strip existing KUBECONFIG from shell to prevent bleed-through ---
+	var cleanEnv []string
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, "KUBECONFIG=") {
+			cleanEnv = append(cleanEnv, env)
+		}
+	}
+	// Force the execution to ONLY use the specified cluster's workspace config
+	ocExec.Env = append(cleanEnv, "KUBECONFIG="+kubeconfigPath)
 
-	// CRITICAL: Bind standard streams so interactive commands like `oc debug` work!
+	// Bind standard streams so interactive commands like `oc debug` work!
 	ocExec.Stdin = os.Stdin
 	ocExec.Stdout = os.Stdout
 	ocExec.Stderr = os.Stderr

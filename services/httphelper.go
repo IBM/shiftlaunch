@@ -237,7 +237,7 @@ func ConfigureHTTPD(ctx context.Context,exec *localexec.LocalClient, port int) e
 		return nil
 	}
 
-	// CRITICAL: Shield from cancellation! Killing sed -i mid-execution will
+	// Shield from cancellation! Killing sed -i mid-execution will
 	// permanently destroy the global Apache configuration file!
 	shieldedCtx := context.WithoutCancel(ctx)
 
