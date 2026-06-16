@@ -4,9 +4,6 @@
 [pr]: https://github.com/sudeeshjohn/go-projects/compare
 [released]: https://help.github.com/articles/github-terms-of-service/#6-contributions-under-repository-license
 
-Hi there! We are thrilled that you would like to contribute to the IBM Infrastructure Go SDK projects.
-Contributions are always welcome, both reporting issues and submitting pull requests!
-
 ## AI-Assistance
 
 AI-assisted tools (e.g., code generation or language models) _may_ be used in the course of contributing issues and pull requests.
