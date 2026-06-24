@@ -356,7 +356,8 @@ mirror:
 
 	// 2. The Queue: oc-mirror v2 hardcodes port 55000. Wait for it to clear across ALL TCP states (including TIME_WAIT).
 	for i := 0; i < 60; i++ { // Wait up to 10 minutes
-		out, _ := r.executor.Execute(ctx, "ss -tan | grep -E ':55000\\b' 2>/dev/null || true")
+		// STRICT MATCH: Use awk to isolate Column 4 (Local Address) so we don't accidentally match inbound ephemeral client ports!
+		out, _ := r.executor.Execute(ctx, "ss -tan | awk '{print $4}' | grep -E ':55000$' 2>/dev/null || true")
 		if strings.TrimSpace(out) == "" {
 			break // Port is free, we can proceed!
 		}
