@@ -29,14 +29,14 @@ func New(debug bool, logPath string) (*Logger, error) {
 	// 1. Attempt to open the log file if a path is provided
 	if logPath != "" {
 		file, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil && file != nil {
+		if err == nil {
 			// Create file logger (colors will be auto-disabled for file)
 			fileOpts := log.Options{
-					ReportTimestamp: true,
-					Prefix:          "ShiftLaunch",
-					// File always captures full debug — the debug flag only gates the terminal.
-					Level: log.DebugLevel,
-				}
+				ReportTimestamp: true,
+				Prefix:          "ShiftLaunch",
+				// File always captures full debug — the debug flag only gates the terminal.
+				Level: log.DebugLevel,
+			}
 			fileLogger = log.NewWithOptions(file, fileOpts)
 		}
 	}
@@ -53,12 +53,17 @@ func New(debug bool, logPath string) (*Logger, error) {
 	}
 	consoleLogger := log.NewWithOptions(os.Stderr, consoleOpts)
 
+	if err != nil {
+		// Log file is optional — report to stderr but do not abort the caller.
+		fmt.Fprintf(os.Stderr, "warning: could not open log file %q: %v\n", logPath, err)
+	}
+
 	return &Logger{
 		consoleLogger: consoleLogger,
 		fileLogger:    fileLogger,
 		file:          file,
 		debug:         debug,
-	}, err
+	}, nil
 }
 
 func (l *Logger) Info(msg string, keyvals ...interface{}) {
@@ -88,7 +93,6 @@ func (l *Logger) Info(msg string, keyvals ...interface{}) {
 			plainText = plainText[:maxLen-3] + "..."
 		}
 
-		l.activeSpinner.UpdateText(plainText)
 		l.activeSpinner.UpdateText(plainText + "\033[K")
 		return
 	}
@@ -157,7 +161,7 @@ func (l *Logger) Capture(f func()) {
 
 // TerminalOnly returns an io.Writer that only writes to the console
 func (l *Logger) TerminalOnly() io.Writer {
-	return os.Stdout
+	return os.Stderr
 }
 
 // FileOnly returns an io.Writer that only writes to the log file

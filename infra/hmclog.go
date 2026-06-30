@@ -39,8 +39,16 @@ func (d *debugRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 
 	// Read and buffer the body so the caller can still consume it.
-	body, readErr := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
+	// Check the read error immediately — a partial body must not be logged or returned.
+	body, err := io.ReadAll(resp.Body)
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		d.logger.Debug("[HMC ✗] body close: " + closeErr.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Restore the body for the caller before any further processing.
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 
 	// Console + file: one-liner with status (no body — avoids charmbracelet truncation).
@@ -55,10 +63,6 @@ func (d *debugRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		time.Now().Format("2006/01/02 15:04:05"), resp.Status, req.URL.String(), bodyStr,
 	)
 	logMu.Unlock()
-
-	if readErr != nil {
-		return nil, readErr
-	}
 	return resp, nil
 }
 
