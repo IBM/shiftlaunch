@@ -283,7 +283,7 @@ func (v *Validator) findClusterUsingVIP(vip string) string {
 
 		var tempCfg types.AgentConfig
 		if err := yaml.Unmarshal(data, &tempCfg); err == nil {
-			if tempCfg.Services.LoadBalancer.VIP == vip {
+			if tempCfg.Services.LoadBalancer != nil && tempCfg.Services.LoadBalancer.GetVIP() == vip {
 				return clusterName
 			}
 		}
@@ -763,7 +763,7 @@ func (v *Validator) validateBYOILPARs() {
 			var systemUUID string
 			var err error
 			v.log.Capture(func() {
-				systemUUID, _, err = v.hmcClient.GetManagedSystemByName(context.Background(), node.SystemName, true)
+				systemUUID, _, err = v.hmcClient.GetManagedSystemByName(context.Background(), node.SystemName)
 			})
 			if err != nil {
 				v.errors = append(v.errors, fmt.Sprintf("failed to get system '%s' for LPAR validation: %v", node.SystemName, err))
@@ -772,7 +772,7 @@ func (v *Validator) validateBYOILPARs() {
 
 			var lpars []hmc.LogicalPartitionQuick
 			v.log.Capture(func() {
-				lpars, err = v.hmcClient.GetLogicalPartitionsQuickAll(context.Background(), systemUUID, true)
+				lpars, err = v.hmcClient.GetLogicalPartitionsQuickAll(context.Background(), systemUUID)
 			})
 			if err != nil {
 				v.errors = append(v.errors, fmt.Sprintf("failed to get LPARs for system '%s': %v", node.SystemName, err))
@@ -975,14 +975,14 @@ func (v *Validator) validateMediaRepositorySpace() {
 	for systemName, count := range systemNodeCount {
 		v.log.Info(fmt.Sprintf("Validating Media Repository on system '%s' for %d node(s)...", systemName, count))
 
-		_, sysUUID, err := v.hmcClient.GetManagedSystemByNameQuick(context.Background(), systemName, v.debug)
+		_, sysUUID, err := v.hmcClient.GetManagedSystemByNameQuick(context.Background(), systemName)
 		if err != nil {
 			v.warnings = append(v.warnings, fmt.Sprintf("Could not resolve system UUID for repository check on '%s': %v", systemName, err))
 			continue
 		}
 
 		// Find the active VIOS
-		viosList, err := v.hmcClient.GetVirtualIOServersQuick(context.Background(), sysUUID, v.debug)
+		viosList, err := v.hmcClient.GetVirtualIOServersQuick(context.Background(), sysUUID)
 		if err != nil || len(viosList) == 0 {
 			v.warnings = append(v.warnings, fmt.Sprintf("Could not retrieve VIOS list for repository check on '%s'", systemName))
 			continue
@@ -1014,14 +1014,14 @@ func (v *Validator) validateMediaRepositorySpace() {
 		requiredGB := float64(createRequestMB) / 1024.0
 
 		// 1. Try to fetch the existing repository info
-		repoInfo, err := v.hmcClient.GetMediaRepositoryInfo(context.Background(), systemName, activeViosName, v.debug)
+		repoInfo, err := v.hmcClient.GetMediaRepositoryInfo(context.Background(), systemName, activeViosName)
 
 		// 2. If it fails OR SizeMB is 0, the repository is missing. Verify we HAVE the capacity to auto-create it later.
 		if err != nil || repoInfo.SizeMB == 0 {
 			v.log.Info(fmt.Sprintf("Media Repository not found on VIOS '%s' (or size is 0). Verifying auto-creation capacity...", activeViosName))
 
 			// Discover a suitable Volume Group
-			vgs, vgErr := v.hmcClient.GetVolumeGroups(context.Background(), activeViosUUID, v.debug)
+			vgs, vgErr := v.hmcClient.GetVolumeGroups(context.Background(), activeViosUUID)
 			if vgErr != nil {
 				v.warnings = append(v.warnings, fmt.Sprintf("Failed to list Volume Groups to verify auto-creation on '%s': %v", activeViosName, vgErr))
 				continue

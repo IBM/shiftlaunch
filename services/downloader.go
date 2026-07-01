@@ -2,7 +2,10 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +36,6 @@ func NewDownloader(cfg *types.AgentConfig, daemonCfg *config.AgentDaemonConfig, 
 
 // DownloadAll downloads all required artifacts into the local workspace
 func (d *Downloader) DownloadAll(ctx context.Context, workspaceDir string) error {
-	// ---  Removed the duplicate unconditional download call ---
 	if d.cfg.Nodes.BootMethod == "agent" {
 		d.logger.Info("Skipping RHCOS image downloads (Agent ISO handles payload dynamically)")
 	} else {
@@ -55,13 +57,14 @@ func (d *Downloader) DownloadRHCOSImages(ctx context.Context, workspaceDir strin
 	d.logger.Info("Downloading RHCOS images to local workspace...")
 
 	rhcosDir := filepath.Join(workspaceDir, "rhcos")
-	d.exec.Execute(ctx, fmt.Sprintf("mkdir -p %s", rhcosDir))
+	if err := os.MkdirAll(rhcosDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create RHCOS directory %s: %w", rhcosDir, err)
+	}
 
 	urls := d.cfg.OpenShift.RHCOSImages
-	timeout := d.daemonCfg.Timeouts.DownloadTimeoutSec // Get timeout from config
+	timeout := d.daemonCfg.Timeouts.DownloadTimeoutSec
 
-	// Note: Checksum validation is optional and not configured in the new config structure
-	// Files will be downloaded without integrity verification unless checksums are added to config
+	manifestPath := filepath.Join(rhcosDir, "sha256sum.txt")
 
 	images := []struct {
 		url      string
@@ -73,52 +76,36 @@ func (d *Downloader) DownloadRHCOSImages(ctx context.Context, workspaceDir strin
 		{urls.RootfsURL, "rootfs.img", "RHCOS rootfs"},
 	}
 
+	forceDownload := d.cfg.OpenShift.ForceOCPDownload
+
 	for _, img := range images {
 		if img.url == "" {
 			return fmt.Errorf("%s URL not provided in configuration", img.desc)
 		}
 		destPath := filepath.Join(rhcosDir, img.filename)
-		expectedHash := "" // Checksum validation disabled in new config structure
 
-		// 3. Conditional Flow based on checksum availability and force_ocp_download flag
-		forceDownload := d.cfg.OpenShift.ForceOCPDownload
+		// Attempt to resolve the expected hash from the manifest; fall back gracefully.
+		expectedHash, _ := d.extractHashFromManifest(ctx, img.url, manifestPath)
 
-		if forceDownload {
-			d.logger.Info("Force download requested. Wiping existing file...", "file", destPath)
-			d.exec.Execute(ctx, fmt.Sprintf("rm -f %s", destPath))
-		} else {
-			if expectedHash != "" {
-				existsCmd := fmt.Sprintf("test -f %s", destPath)
-				if _, err := d.exec.Execute(ctx, existsCmd); err == nil {
-					if d.verifyFileHash(ctx, destPath, expectedHash) {
-						d.logger.Info("Checksum matches, skipping download", "image", img.desc)
-						continue
-					}
-					d.logger.Warn("Checksum mismatch. Wiping corrupted file and re-downloading...", "image", img.desc)
-					d.exec.Execute(ctx, fmt.Sprintf("rm -f %s", destPath))
-				}
-			} else {
-				checkCmd := fmt.Sprintf("test -s %s", destPath)
-				if _, err := d.exec.Execute(ctx, checkCmd); err == nil {
-					d.logger.Info("File already exists, skipping download (no checksum validation)", "image", img.desc)
-					continue
-				}
+		skip, wipe := d.resolveDownloadAction(ctx, destPath, expectedHash, forceDownload)
+		if skip {
+			continue
+		}
+		if wipe {
+			if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+				d.logger.Warn("Failed to remove stale file", "file", destPath, "error", err)
 			}
 		}
 
-		// 4. Download the file
 		d.logger.Info("Downloading image...", "image", img.desc)
-
-		// Use the dynamic timeout here!
-		downloadCmd := fmt.Sprintf("curl -sSL -C - --retry 3 --retry-delay 5 --max-time %d -o %s '%s'", timeout, destPath, img.url)
+		downloadCmd := fmt.Sprintf("curl -sSL -C - --retry 3 --retry-delay 5 --max-time %d -o %s -- %s", timeout, shellQuote(destPath), shellQuote(img.url))
 		if _, err := d.exec.Execute(ctx, downloadCmd); err != nil {
 			return fmt.Errorf("failed to download %s from %s: %w", img.desc, img.url, err)
 		}
 
-		// 5. Final Verification (if checksum is available)
 		if expectedHash != "" {
 			if !d.verifyFileHash(ctx, destPath, expectedHash) {
-				return fmt.Errorf("FATAL: %s checksum mismatch after download", img.desc)
+				return fmt.Errorf("%s checksum mismatch after download", img.desc)
 			}
 			d.logger.Info("Downloaded and verified", "image", img.desc)
 		} else {
@@ -134,7 +121,9 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context, workspaceDir st
 	d.logger.Info("Downloading OpenShift tools...")
 
 	toolsDir := filepath.Join(workspaceDir, "tools")
-	d.exec.Execute(ctx, fmt.Sprintf("mkdir -p %s", toolsDir))
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create tools directory %s: %w", toolsDir, err)
+	}
 
 	// Check if the extracted binaries are already here (Airgap mode safety)
 	installerPath := filepath.Join(toolsDir, "openshift-install")
@@ -155,10 +144,10 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context, workspaceDir st
 	if ocpConfig.ChecksumURL != "" {
 		d.logger.Info("Integrity Mode: Fetching fresh checksum manifest", "url", ocpConfig.ChecksumURL)
 
-		// Force wipe any stale manifest to guarantee we get the latest
-		d.exec.Execute(ctx, fmt.Sprintf("rm -f %s", manifestPath))
+		// Force wipe any stale manifest to guarantee we get the latest.
+		_ = os.Remove(manifestPath)
 
-		dlManifestCmd := fmt.Sprintf("curl -sSL --fail --max-time %d -o %s '%s'", timeout, manifestPath, ocpConfig.ChecksumURL)
+		dlManifestCmd := fmt.Sprintf("curl -sSL --fail --max-time %d -o %s -- %s", timeout, shellQuote(manifestPath), shellQuote(ocpConfig.ChecksumURL))
 		if _, err := d.exec.Execute(ctx, dlManifestCmd); err != nil {
 			d.logger.Warn("Failed to fetch checksum manifest", "error", err)
 		} else {
@@ -176,50 +165,34 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context, workspaceDir st
 		{ocpConfig.MirrorClient, "oc-mirror.tar.gz", "OpenShift mirror plugin"},
 	}
 
+	forceDownload := d.cfg.OpenShift.ForceOCPDownload
+
 	for _, tool := range tools {
 		if tool.url == "" {
 			continue
 		}
 		destPath := filepath.Join(toolsDir, tool.filename)
-		// Checksum validation disabled in new config structure
-		expectedHash := ""
 
-		forceDownload := d.cfg.OpenShift.ForceOCPDownload
+		// Attempt to resolve the expected hash from the manifest downloaded above.
+		expectedHash, _ := d.extractHashFromManifest(ctx, tool.url, manifestPath)
 
-		if forceDownload {
-			d.logger.Info("Force download requested. Wiping existing file...", "file", destPath)
-			d.exec.Execute(ctx, fmt.Sprintf("rm -f %s", destPath))
-		} else {
-			if expectedHash != "" {
-				existsCmd := fmt.Sprintf("test -f %s", destPath)
-				if _, err := d.exec.Execute(ctx, existsCmd); err == nil {
-					if d.verifyFileHash(ctx, destPath, expectedHash) {
-						d.logger.Info("Matches checksum, skipping download", "tool", tool.desc)
-						continue
-					}
-					d.logger.Warn("Checksum mismatch. Wiping corrupted file and re-downloading...", "tool", tool.desc)
-					d.exec.Execute(ctx, fmt.Sprintf("rm -f %s", destPath))
-				}
-			} else {
-				checkCmd := fmt.Sprintf("test -s %s", destPath)
-				if _, err := d.exec.Execute(ctx, checkCmd); err == nil {
-					d.logger.Info("File already exists, skipping download (no checksum validation)", "tool", tool.desc)
-					continue
-				}
+		skip, wipe := d.resolveDownloadAction(ctx, destPath, expectedHash, forceDownload)
+		if skip {
+			continue
+		}
+		if wipe {
+			if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+				d.logger.Warn("Failed to remove stale file", "file", destPath, "error", err)
 			}
 		}
 
-		// 4. Download
 		d.logger.Info("Downloading tool...", "tool", tool.desc)
-
-		// Use the dynamic timeout here!
-		downloadCmd := fmt.Sprintf("curl -sSL -C - --retry 3 --retry-delay 5 --max-time %d -o %s '%s'", timeout, destPath, tool.url)
+		downloadCmd := fmt.Sprintf("curl -sSL -C - --retry 3 --retry-delay 5 --max-time %d -o %s -- %s", timeout, shellQuote(destPath), shellQuote(tool.url))
 		if _, err := d.exec.Execute(ctx, downloadCmd); err != nil {
 			d.logger.Warn("Failed to download tool", "tool", tool.desc, "error", err)
 			continue
 		}
 
-		// 5. Final Verification
 		if expectedHash != "" {
 			if !d.verifyFileHash(ctx, destPath, expectedHash) {
 				d.logger.Warn("Checksum mismatch after download", "tool", tool.desc)
@@ -237,60 +210,114 @@ func (d *Downloader) DownloadOpenShiftTools(ctx context.Context, workspaceDir st
 func (d *Downloader) extractOpenShiftTools(ctx context.Context, toolsDir string) error {
 	shieldedCtx := context.WithoutCancel(ctx)
 
-	//Add oc-mirror.tar.gz to extraction targets
+	// Extract each archive that is present and non-empty.
 	tools := []string{"openshift-install-linux.tar.gz", "openshift-client-linux.tar.gz", "oc-mirror.tar.gz"}
 	for _, tool := range tools {
 		tarPath := filepath.Join(toolsDir, tool)
-		if _, err := d.exec.Execute(shieldedCtx, fmt.Sprintf("test -s %s", tarPath)); err != nil {
+		if _, err := d.exec.Execute(shieldedCtx, "test -s "+shellQuote(tarPath)); err != nil {
 			continue
 		}
-		extractCmd := fmt.Sprintf("cd %s && tar -xzf %s", toolsDir, tool)
+		extractCmd := fmt.Sprintf("tar -xzf %s -C %s", shellQuote(tarPath), shellQuote(toolsDir))
 		if _, err := d.exec.Execute(shieldedCtx, extractCmd); err != nil {
 			return fmt.Errorf("failed to extract %s: %w", tool, err)
 		}
 	}
 
-	//Add oc-mirror to the chmod list
-	makeExecCmd := fmt.Sprintf("cd %s && chmod +x openshift-install oc kubectl oc-mirror 2>/dev/null || true", toolsDir)
+	// Make all extracted binaries executable.
+	makeExecCmd := fmt.Sprintf(
+		"chmod +x %s %s %s %s 2>/dev/null || true",
+		shellQuote(filepath.Join(toolsDir, "openshift-install")),
+		shellQuote(filepath.Join(toolsDir, "oc")),
+		shellQuote(filepath.Join(toolsDir, "kubectl")),
+		shellQuote(filepath.Join(toolsDir, "oc-mirror")),
+	)
 	_, err := d.exec.Execute(shieldedCtx, makeExecCmd)
 	return err
 }
 
 // extractHashFromManifest parses sha256sum.txt for a specific filename
 // Uses precise grep pattern to avoid partial matches (e.g., "kernel" vs "my-kernel")
-func (d *Downloader) extractHashFromManifest(ctx context.Context, originalURL, manifestPath string) (string, error) {
-	// Strip any query parameters from the URL (e.g., ?signature=123)
-	cleanURL := strings.Split(originalURL, "?")[0]
+func (d *Downloader) extractHashFromManifest(_ context.Context, originalURL, manifestPath string) (string, error) {
+	// Strip query parameters (e.g. signed S3 URLs) before extracting the basename.
+	cleanURL := strings.SplitN(originalURL, "?", 2)[0]
 	filename := filepath.Base(cleanURL)
 
-	// Ensure the manifest file actually exists before grepping
-	if _, err := d.exec.Execute(ctx, fmt.Sprintf("test -f %s", manifestPath)); err != nil {
-		return "", fmt.Errorf("manifest file not found on disk")
+	if _, err := os.Stat(manifestPath); err != nil {
+		return "", fmt.Errorf("manifest not found: %s", manifestPath)
 	}
 
-	// Use [[:space:]] to match whitespace and $ to anchor end of line
-	extractCmd := fmt.Sprintf("grep -E '[[:space:]]%s$' %s | awk '{print $1}'", filename, manifestPath)
-	hash, err := d.exec.Execute(ctx, extractCmd)
+	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return "", fmt.Errorf("grep command failed: %w", err)
+		return "", fmt.Errorf("failed to read manifest %s: %w", manifestPath, err)
 	}
 
-	hash = strings.TrimSpace(hash)
-	if hash == "" {
-		return "", fmt.Errorf("filename '%s' not found inside the manifest", filename)
+	// Each sha256sum line: "<hash>  <filename>" — match last field to avoid
+	// partial name collisions (e.g. "kernel" matching "my-kernel").
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[len(fields)-1] == filename {
+			return fields[0], nil
+		}
 	}
 
-	return hash, nil
+	return "", fmt.Errorf("filename %q not found in manifest", filename)
 }
 
-// verifyFileHash calculates SHA256 hash of a file and compares it to expected hash
-func (d *Downloader) verifyFileHash(ctx context.Context, filePath, expectedHash string) bool {
-	calcCmd := fmt.Sprintf("sha256sum %s | awk '{print $1}'", filePath)
-	actualHash, err := d.exec.Execute(ctx, calcCmd)
+// resolveDownloadAction inspects the file at destPath and returns the action
+// the caller should take before attempting a download, based on the force flag,
+// checksum availability, and the file's current state on disk.
+//
+// Returns:
+//   - skip=true  → file is present and verified; the caller should skip the download.
+//   - wipe=true  → file is stale or corrupt; the caller must remove it before downloading.
+func (d *Downloader) resolveDownloadAction(ctx context.Context, destPath, expectedHash string, forceDownload bool) (skip, wipe bool) {
+	if forceDownload {
+		d.logger.Info("Force download requested. Wiping existing file...", "file", destPath)
+		return false, true
+	}
+
+	fi, err := os.Stat(destPath)
+	fileExists := err == nil
+
+	if expectedHash != "" {
+		if !fileExists {
+			return false, false // nothing on disk yet; proceed to download
+		}
+		if d.verifyFileHash(ctx, destPath, expectedHash) {
+			d.logger.Info("Checksum matches, skipping download", "file", destPath)
+			return true, false
+		}
+		d.logger.Warn("Checksum mismatch. Wiping corrupted file and re-downloading...", "file", destPath)
+		return false, true
+	}
+
+	// No checksum available. Guard against S3-backed mirrors that return HTTP 200
+	// on a Range request, causing curl -C - to silently re-download the whole file.
+	// Skip only if the file is already non-empty; a truncated partial can be
+	// recovered with ForceOCPDownload=true.
+	if fileExists && fi.Size() > 0 {
+		d.logger.Info("File exists, no checksum configured — skipping re-download", "file", destPath)
+		return true, false
+	}
+
+	return false, false
+}
+
+// verifyFileHash computes the SHA-256 digest of filePath in pure Go and
+// compares it against expectedHash (lowercase hex). Returns false on any error.
+func (d *Downloader) verifyFileHash(_ context.Context, filePath, expectedHash string) bool {
+	f, err := os.Open(filePath)
 	if err != nil {
 		return false
 	}
-	actual := strings.TrimSpace(actualHash)
-	expected := strings.TrimSpace(expectedHash)
-	return actual == expected
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+
+	actual := hex.EncodeToString(h.Sum(nil))
+	return actual == strings.TrimSpace(expectedHash)
 }
+

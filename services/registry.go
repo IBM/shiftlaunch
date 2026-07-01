@@ -167,7 +167,7 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 		// Ensure the port isn't hogged by something we can't authenticate to
 		portCheck, _ := r.executor.Execute(shieldedCtx, "ss -tlpn | grep ':5000 ' 2>/dev/null || true")
 		if strings.TrimSpace(portCheck) != "" {
-			return fmt.Errorf("Port 5000 is in use, but registry authentication failed (HTTP %s). Cannot proceed.", httpCode)
+			return fmt.Errorf("port 5000 is in use but registry authentication failed (HTTP %s)", httpCode)
 		}
 
 		r.logger.Debug("Starting fresh local registry service...")
@@ -232,14 +232,17 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 	pullSecretPath := os.ExpandEnv(strings.ReplaceAll(r.cfg.OpenShift.PullSecretFile, "~", "$HOME"))
 	updatedSecretPath := filepath.Join(workspaceDir, "pull-secret-updated.json")
 
-	/*updateSecretCmd := fmt.Sprintf(`registry_token=$(echo -n "%s:%s" | base64 -w0) && \
-	jq '.auths += {"%s": {"auth": "'$registry_token'","email": "noemail@localhost"}}' \
-	< %s > %s`,
-	username, password, registryURL, pullSecretPath, updatedSecretPath)*/
-	updateSecretCmd := fmt.Sprintf(`registry_token=$(echo -n "%s:%s" | base64 -w0) && \
-	jq -c '.auths += {"%s": {"auth": "'$registry_token'","email": "noemail@localhost"}}' \
-	< %s > %s`,
-		username, password, registryURL, pullSecretPath, updatedSecretPath)
+	// export REG_TOKEN so jq can read it via env.REG_TOKEN — it never appears in
+	// the filter string itself. registryURL is bound via --arg so it is an opaque
+	// jq variable ($host) with no quoting issues. All credentials and paths are
+	// wrapped in shellQuote so bash metacharacters cannot escape the shell command.
+	updateSecretCmd := fmt.Sprintf(
+		`export REG_TOKEN=$(printf '%%s:%%s' %s %s | base64 -w0) && `+
+			`jq -c --arg host %s '.auths += {($host): {"auth": env.REG_TOKEN}}' `+
+			`< %s > %s`,
+		shellQuote(username), shellQuote(password), shellQuote(registryURL),
+		shellQuote(pullSecretPath), shellQuote(updatedSecretPath),
+	)
 	if _, err := r.executor.Execute(shieldedCtx, updateSecretCmd); err != nil {
 		return fmt.Errorf("failed to update pull secret: %w", err)
 	}
@@ -519,4 +522,11 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// shellQuote wraps s in single quotes and escapes any literal single quotes
+// inside it using the '\'' idiom, making the value safe to embed in a bash
+// command string regardless of the characters it contains.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

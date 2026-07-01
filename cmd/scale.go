@@ -319,7 +319,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 
 			if targetUUID != "" {
 				// Power off LPAR immediately without deleting it
-				_, err := hmcProvider.GetHMCClient().PowerOffPartition(ctx, targetUUID, "Immediate", false, true)
+				_, err := hmcProvider.GetHMCClient().PowerOffPartition(ctx, targetUUID, "Immediate", false)
 				if err != nil && !strings.Contains(strings.ToLower(err.Error()), "unavailable in the current partition state") {
 					log.Warn("Failed to power off LPAR", "error", err)
 				}
@@ -329,17 +329,17 @@ func runScale(cmd *cobra.Command, args []string) error {
 					for i, mapping := range state.ISOMappings {
 						if mapping.NodeName == target.Hostname {
 							// Resolve System UUID required for unmapping
-							sysUUID, _, _ := hmcProvider.GetHMCClient().GetManagedSystemByName(ctx, mapping.SystemName, debug)
+							sysUUID, _, _ := hmcProvider.GetHMCClient().GetManagedSystemByName(ctx, mapping.SystemName)
 
 							if sysUUID != "" {
 								// Unmap ISO from LPAR
-								_, err := hmcProvider.GetHMCClient().DeleteVirtualOpticalMaps(ctx, sysUUID, mapping.VIOSUUID, targetUUID, []string{mapping.MediaName}, debug)
+								_, err := hmcProvider.GetHMCClient().DeleteVirtualOpticalMaps(ctx, sysUUID, mapping.VIOSUUID, targetUUID, []string{mapping.MediaName})
 								if err != nil {
 									log.Warn("Failed to unmap ISO from LPAR", "error", err)
 								} else {
 									time.Sleep(3 * time.Second) // Let VIOS digest the unmap
 									// Delete ISO from repository
-									err = hmcProvider.GetHMCClient().DeleteVirtualOpticalMedia(ctx, mapping.SystemName, mapping.VIOSName, mapping.MediaName, debug)
+									err = hmcProvider.GetHMCClient().DeleteVirtualOpticalMedia(ctx, mapping.SystemName, mapping.VIOSName, mapping.MediaName)
 									if err != nil && !strings.Contains(err.Error(), "not found") {
 										log.Warn("Failed to delete ISO from VIOS repository", "error", err)
 									}

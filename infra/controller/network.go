@@ -105,8 +105,10 @@ func (nm *NetworkManager) RemoveVIPAlias(ctx context.Context, iface, ip, cidr, c
 		return nil
 	}
 
-	// 3. Get ALL IPv4 addresses currently configured on the interface
-	getAllCmd := fmt.Sprintf("ip -o -4 addr show dev %s | awk '{print $4}'", iface)
+	// 3. Get ALL IPv4 addresses currently configured on the interface.
+	// grep -oP is used instead of awk column-splitting to be robust against
+	// secondary interface labels or extra routing flags that would shift columns.
+	getAllCmd := fmt.Sprintf("ip -o -4 addr show dev %s | grep -oP '\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+'", iface)
 	allIPsOut, err := nm.executor.Execute(ctx, getAllCmd)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve IP addresses for interface %s: %v", iface, err)

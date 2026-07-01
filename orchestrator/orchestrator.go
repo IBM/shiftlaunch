@@ -241,33 +241,33 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				output, err := o.executor.Execute(ctx, fmt.Sprintf("ip addr show %s", iface))
 				if err == nil && strings.Contains(output, o.cfg.Services.LoadBalancer.GetVIP()+"/") {
 					// VIP is configured - check which cluster is using it
-					conflictingCluster := o.findClusterUsingVIP(o.cfg.Services.LoadBalancer.VIP)
+					conflictingCluster := o.findClusterUsingVIP(o.cfg.Services.LoadBalancer.GetVIP())
 					if conflictingCluster != "" {
 						o.logger.Error("VIP is already in use by another cluster",
-							"vip", o.cfg.Services.LoadBalancer.VIP,
+							"vip", o.cfg.Services.LoadBalancer.GetVIP(),
 							"cluster", conflictingCluster)
 						return fmt.Errorf("VIP %s is already in use by cluster '%s'. Please choose a different VIP or delete the conflicting cluster first",
-							o.cfg.Services.LoadBalancer.VIP, conflictingCluster)
+							o.cfg.Services.LoadBalancer.GetVIP(), conflictingCluster)
 					}
 					o.logger.Error("VIP is already configured on interface",
-						"vip", o.cfg.Services.LoadBalancer.VIP,
+						"vip", o.cfg.Services.LoadBalancer.GetVIP(),
 						"interface", iface)
 					return fmt.Errorf("VIP %s is already configured on interface %s. Please remove the VIP alias manually or choose a different VIP",
-						o.cfg.Services.LoadBalancer.VIP, iface)
+						o.cfg.Services.LoadBalancer.GetVIP(), iface)
 				}
 			}
 
 			// Check if VIP is defined in another cluster's config
-			conflictingCluster := o.findClusterUsingVIP(o.cfg.Services.LoadBalancer.VIP)
+			conflictingCluster := o.findClusterUsingVIP(o.cfg.Services.LoadBalancer.GetVIP())
 			if conflictingCluster != "" {
 				o.logger.Error("VIP is already configured for another cluster",
-					"vip", o.cfg.Services.LoadBalancer.VIP,
+					"vip", o.cfg.Services.LoadBalancer.GetVIP(),
 					"cluster", conflictingCluster)
 				return fmt.Errorf("VIP %s is already configured for cluster '%s'. Please choose a different VIP",
-					o.cfg.Services.LoadBalancer.VIP, conflictingCluster)
+					o.cfg.Services.LoadBalancer.GetVIP(), conflictingCluster)
 			}
-
-			o.logger.Info("VIP is available", "vip", o.cfg.Services.LoadBalancer.VIP)
+	
+			o.logger.Info("VIP is available", "vip", o.cfg.Services.LoadBalancer.GetVIP())
 		}
 
 		o.logger.EndPhase(true, "[Phase 0/6] Pre-Deployment Validation Complete")
@@ -979,7 +979,7 @@ func (o *Orchestrator) findClusterUsingVIP(vip string) string {
 		// Safely parse the YAML to guarantee an exact value match
 		var tempCfg types.AgentConfig
 		if err := yaml.Unmarshal(data, &tempCfg); err == nil {
-			if tempCfg.Services.LoadBalancer.VIP == vip {
+			if tempCfg.Services.LoadBalancer != nil && tempCfg.Services.LoadBalancer.GetVIP() == vip {
 				return clusterName
 			}
 		}

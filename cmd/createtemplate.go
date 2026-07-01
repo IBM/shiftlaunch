@@ -7,8 +7,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/spf13/cobra"
 	"github.com/IBM/shiftlaunch/logger"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -47,7 +47,7 @@ func init() {
 	rootCmd.AddCommand(generateConfigCmd)
 
 	generateConfigCmd.Flags().StringVarP(&genConfigType, "type", "t", "multi", "Cluster topology: 'sno' or 'multi'")
-	generateConfigCmd.Flags().StringVarP(&genBootMethod, "boot", "b", "agent", "Boot method: 'agent' or 'netboot'")
+	generateConfigCmd.Flags().StringVarP(&genBootMethod, "boot", "b", "netboot", "Boot method: 'agent' or 'netboot'")
 	generateConfigCmd.Flags().StringVarP(&genOutputPath, "output", "o", "config.yaml", "Path to save the generated file")
 	generateConfigCmd.Flags().StringVar(&genReleaseType, "release-type", "official", "Payload type: 'official' or 'ci'")
 

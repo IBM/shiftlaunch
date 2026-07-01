@@ -59,8 +59,9 @@ func (l *LocalClient) Execute(ctx context.Context, command string) (string, erro
 func (l *LocalClient) WriteFile(ctx context.Context, path string, content []byte, perms os.FileMode) error {
 	l.logger.Debug("Writing local file", "path", path)
 
-	// Create temp file
-	tmpPath := filepath.Join("/tmp", filepath.Base(path)+".tmp")
+	// Create temp file with the PID embedded so concurrent shiftlaunch processes
+	// (e.g. two simultaneous `shiftlaunch create` runs) never share the same path.
+	tmpPath := filepath.Join("/tmp", fmt.Sprintf("%s-%d.tmp", filepath.Base(path), os.Getpid()))
 	if err := os.WriteFile(tmpPath, content, perms); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}

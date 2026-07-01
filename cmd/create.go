@@ -52,8 +52,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Ensure logger file descriptor is closed when command completes
-	defer orch.GetLogger().Close()
+	// Ensure logger file descriptor is closed when command completes.
+	// The anonymous func is required so the pointer is evaluated at exit time,
+	// not now — orch may be replaced with a new orchestrator further below if
+	// the workspace was previously deleted.
+	defer func() { orch.GetLogger().Close() }()
 
 	ctx := GetContext()
 	log := orch.GetLogger()

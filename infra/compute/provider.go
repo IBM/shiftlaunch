@@ -36,14 +36,14 @@ func NewProvider(cfg *types.AgentConfig, log *logger.Logger, debug bool) (Provid
 func NewProviderWithState(cfg *types.AgentConfig, log *logger.Logger, debug bool, stateManager *types.StateManager) (Provider, error) {
 	log.Debug("Connecting to HMC...", "ip", cfg.HMC.IP, "user", cfg.HMC.Username)
 
-	client := hmc.NewRestClient(cfg.HMC.IP)
-
-	// Configure HMC logger to write API traffic to deployment log only (not terminal)
-	hmcLogger := infra.NewHMCLoggerAdapter(log, debug)
-	client.SetLogger(hmcLogger)
+	// Always attach the debug transport so the deployment log captures full HMC
+	// traffic regardless of --debug. The console only shows it when debug==true
+	// because the console logger is set to InfoLevel in that case.
+	baseClient := hmc.NewRestClient(cfg.HMC.IP).WithTLSInsecure()
+	client := baseClient.WithTransport(infra.HMCDebugTransport(log)(baseClient.HTTPTransport()))
 
 	log.Debug("Authenticating with HMC...")
-	if err := client.Login(context.Background(), cfg.HMC.Username, cfg.HMC.Password, debug); err != nil {
+	if err := client.Login(context.Background(), cfg.HMC.Username, cfg.HMC.Password); err != nil {
 		return nil, fmt.Errorf("HMC login failed for user %s at %s: %w. Please verify HMC is accessible and credentials are correct", cfg.HMC.Username, cfg.HMC.IP, err)
 	}
 
