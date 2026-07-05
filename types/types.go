@@ -332,9 +332,6 @@ func (c *AgentConfig) GetAllNodes() []*NodeConfig {
 // Validate processes configuration layout rules before triggering pipelines.
 func (c *AgentConfig) Validate() error {
 	if c.IsSNO() {
-		if c.Nodes.BootMethod == "netboot" {
-			return fmt.Errorf("topology mismatch: Single Node OpenShift (SNO) is completely incompatible with 'netboot'")
-		}
 		if len(c.Nodes.Workers) > 0 || len(c.Nodes.Bootstrap) > 0 {
 			return fmt.Errorf("topology conflict: exactly 1 master node is defined, triggering Single Node OpenShift (SNO) mode. However, you still have targets listed under 'workers' or 'bootstrap'. Please remove those extra nodes to proceed")
 		}

@@ -74,11 +74,6 @@ func runGenerateConfig(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid boot method: '%s'. Must be 'agent' or 'netboot'", bootMethod)
 	}
 
-	// Interlock: SNO + netboot is an invalid combination
-	if configType == "sno" && bootMethod == "netboot" {
-		return fmt.Errorf("invalid combination: Single Node OpenShift (SNO) requires the 'agent' boot method. Netboot is not supported for SNO")
-	}
-
 	if _, err := os.Stat(genOutputPath); err == nil {
 		return fmt.Errorf("file '%s' already exists. Refusing to overwrite", genOutputPath)
 	}
@@ -125,6 +120,7 @@ func runGenerateConfig(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
+
 // TemplateData struct
 type TemplateData struct {
 	IsSNO          bool
