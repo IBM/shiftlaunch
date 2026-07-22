@@ -47,7 +47,7 @@ check_ignition() {
 check_rhcos() {
     echo "Checking RHCOS images..."
     local found=0
-    for file in rhcos-live-kernel-ppc64le rhcos-live-initramfs.ppc64le.img rhcos-live-rootfs.ppc64le.img; do
+    for file in rhcos-live-kernel.ppc64le rhcos-live-initramfs.ppc64le.img rhcos-live-rootfs.ppc64le.img; do
         if [ -f "${HTTP_DIR}/rhcos/${file}" ]; then
             local size=$(du -h "${HTTP_DIR}/rhcos/${file}" | awk '{print $1}')
             echo "  ${file} (${size})"

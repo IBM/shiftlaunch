@@ -324,36 +324,66 @@ func (v *Validator) validateOpenShift() {
 		}
 	}
 
+	preRelease := isPreReleaseVersion(o.Version)
+
 	// Skip RHCOS validation for Agent boot (Agent installer downloads RHCOS automatically)
 	if v.cfg.Nodes.BootMethod == "agent" {
 		v.log.Info("Skipping RHCOS image validation for Agent ISO boot (Agent installer downloads RHCOS automatically)")
-		// Still validate OCP client config
+		// OCP client URLs are always required for agent boot
 		if o.OCPClientConfig.Client == "" {
-			v.errors = append(v.errors, "openshift.ocp_client_config.ocp_client is required")
+			if preRelease {
+				v.errors = append(v.errors, fmt.Sprintf("openshift.ocp_client_config.ocp_client is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+			} else {
+				v.errors = append(v.errors, "openshift.ocp_client_config.ocp_client is required")
+			}
 		}
 		if o.OCPClientConfig.Installer == "" {
-			v.errors = append(v.errors, "openshift.ocp_client_config.ocp_installer is required")
+			if preRelease {
+				v.errors = append(v.errors, fmt.Sprintf("openshift.ocp_client_config.ocp_installer is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+			} else {
+				v.errors = append(v.errors, "openshift.ocp_client_config.ocp_installer is required")
+			}
 		}
 		return // Skip RHCOS URL validation
 	}
 
 	// Validate RHCOS URLs for netboot
 	if o.RHCOSImages.KernelURL == "" {
-		v.errors = append(v.errors, "openshift.rhcos_images.kernel_url is required")
+		if preRelease {
+			v.errors = append(v.errors, fmt.Sprintf("openshift.rhcos_images.kernel_url is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+		} else {
+			v.errors = append(v.errors, "openshift.rhcos_images.kernel_url is required")
+		}
 	}
 	if o.RHCOSImages.InitramfsURL == "" {
-		v.errors = append(v.errors, "openshift.rhcos_images.initramfs_url is required")
+		if preRelease {
+			v.errors = append(v.errors, fmt.Sprintf("openshift.rhcos_images.initramfs_url is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+		} else {
+			v.errors = append(v.errors, "openshift.rhcos_images.initramfs_url is required")
+		}
 	}
 	if o.RHCOSImages.RootfsURL == "" {
-		v.errors = append(v.errors, "openshift.rhcos_images.rootfs_url is required")
+		if preRelease {
+			v.errors = append(v.errors, fmt.Sprintf("openshift.rhcos_images.rootfs_url is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+		} else {
+			v.errors = append(v.errors, "openshift.rhcos_images.rootfs_url is required")
+		}
 	}
 
 	// Validate OCP client config for netboot (already validated above for agent boot)
 	if o.OCPClientConfig.Client == "" {
-		v.errors = append(v.errors, "openshift.ocp_client_config.ocp_client is required")
+		if preRelease {
+			v.errors = append(v.errors, fmt.Sprintf("openshift.ocp_client_config.ocp_client is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+		} else {
+			v.errors = append(v.errors, "openshift.ocp_client_config.ocp_client is required")
+		}
 	}
 	if o.OCPClientConfig.Installer == "" {
-		v.errors = append(v.errors, "openshift.ocp_client_config.ocp_installer is required")
+		if preRelease {
+			v.errors = append(v.errors, fmt.Sprintf("openshift.ocp_client_config.ocp_installer is required: version '%s' is a pre-release and has no stable mirror path — provide the URL explicitly", o.Version))
+		} else {
+			v.errors = append(v.errors, "openshift.ocp_client_config.ocp_installer is required")
+		}
 	}
 }
 
@@ -1114,4 +1144,15 @@ func (v *Validator) validateNodeIPsNotAlive(ctx context.Context) {
 	// Add all collected errors to validator errors
 	v.errors = append(v.errors, conflictErrors...)
 }
-
+// isPreReleaseVersion returns true if the version string contains any pre-release
+// marker that would not have a stable path on mirror.openshift.com.
+// Examples: 4.21.0-ec.1, 4.21.0-rc.2, 4.21.0-candidate, 4.21.0-0.nightly-2025-01-01
+func isPreReleaseVersion(version string) bool {
+	lower := strings.ToLower(version)
+	for _, marker := range []string{"ec", "rc", "candidate", "nightly", "pre", "alpha", "beta"} {
+		if strings.Contains(lower, "-"+marker) {
+			return true
+		}
+	}
+	return false
+}

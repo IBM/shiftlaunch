@@ -268,6 +268,7 @@ type RHCOSURLs struct {
 	KernelURL    string `yaml:"kernel_url,omitempty"`
 	InitramfsURL string `yaml:"initramfs_url,omitempty"`
 	RootfsURL    string `yaml:"rootfs_url,omitempty"`
+	ChecksumURL  string `yaml:"checksum_url,omitempty"`
 }
 
 type OCPClientConfig struct {
