@@ -229,45 +229,38 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 		o.logger.StartPhase("[Phase 0/6] Pre-Deployment Validation")
 
 		// Validate VIP is not in use
-		if o.cfg.Services.LoadBalancer.IsManaged() && o.cfg.Services.LoadBalancer.GetVIP() != "" {
-			o.logger.Info("Validating VIP availability...", "vip", o.cfg.Services.LoadBalancer.GetVIP())
+		if o.cfg.Services.LoadBalancer.IsManaged() {
+			effectiveVIP := o.cfg.GetEffectiveVIP()
+			if effectiveVIP != "" {
+				o.logger.Info("Validating VIP availability...", "vip", effectiveVIP)
 
-			// Check if VIP is configured on interface
-			iface := o.cfg.Network.ControllerInterface
-			ctrlIP := o.cfg.Network.ControllerIP
+				iface := o.cfg.Network.ControllerInterface
+				ctrlIP := o.cfg.Network.ControllerIP
 
-			// ZERO-CONFIG SHIELD: If VIP is the Controller IP, it belongs on the interface natively!
-			if iface != "" && o.cfg.Services.LoadBalancer.GetVIP() != ctrlIP {
-				output, err := o.executor.Execute(ctx, fmt.Sprintf("ip addr show %s", iface))
-				if err == nil && strings.Contains(output, o.cfg.Services.LoadBalancer.GetVIP()+"/") {
-					// VIP is configured - check which cluster is using it
-					conflictingCluster := o.findClusterUsingVIP(o.cfg.Services.LoadBalancer.GetVIP())
-					if conflictingCluster != "" {
-						o.logger.Error("VIP is already in use by another cluster",
-							"vip", o.cfg.Services.LoadBalancer.GetVIP(),
-							"cluster", conflictingCluster)
-						return fmt.Errorf("VIP %s is already in use by cluster '%s'. Please choose a different VIP or delete the conflicting cluster first",
-							o.cfg.Services.LoadBalancer.GetVIP(), conflictingCluster)
-					}
-					o.logger.Error("VIP is already configured on interface",
-						"vip", o.cfg.Services.LoadBalancer.GetVIP(),
-						"interface", iface)
-					return fmt.Errorf("VIP %s is already configured on interface %s. Please remove the VIP alias manually or choose a different VIP",
-						o.cfg.Services.LoadBalancer.GetVIP(), iface)
+				// 1. ALWAYS check cross-cluster collision first (even for the Controller IP).
+				conflictingCluster := o.findClusterUsingVIP(effectiveVIP)
+				if conflictingCluster != "" {
+					o.logger.Error("VIP is already in use by another cluster",
+						"vip", effectiveVIP,
+						"cluster", conflictingCluster)
+					return fmt.Errorf("VIP %s is already configured for cluster '%s'. Please choose a different VIP",
+						effectiveVIP, conflictingCluster)
 				}
-			}
 
-			// Check if VIP is defined in another cluster's config
-			conflictingCluster := o.findClusterUsingVIP(o.cfg.Services.LoadBalancer.GetVIP())
-			if conflictingCluster != "" {
-				o.logger.Error("VIP is already configured for another cluster",
-					"vip", o.cfg.Services.LoadBalancer.GetVIP(),
-					"cluster", conflictingCluster)
-				return fmt.Errorf("VIP %s is already configured for cluster '%s'. Please choose a different VIP",
-					o.cfg.Services.LoadBalancer.GetVIP(), conflictingCluster)
-			}
+				// 2. ZERO-CONFIG: Controller IP lives on the interface natively — no alias check needed.
+				if iface != "" && effectiveVIP != ctrlIP {
+					output, err := o.executor.Execute(ctx, fmt.Sprintf("ip addr show %s", iface))
+					if err == nil && strings.Contains(output, effectiveVIP+"/") {
+						o.logger.Error("VIP is already configured on interface",
+							"vip", effectiveVIP,
+							"interface", iface)
+						return fmt.Errorf("VIP %s is already configured on interface %s. Please remove the VIP alias manually or choose a different VIP",
+							effectiveVIP, iface)
+					}
+				}
 
-			o.logger.Info("VIP is available", "vip", o.cfg.Services.LoadBalancer.GetVIP())
+				o.logger.Info("VIP is available", "vip", effectiveVIP)
+			}
 		}
 
 		o.logger.EndPhase(true, "[Phase 0/6] Pre-Deployment Validation Complete")
@@ -928,15 +921,13 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// findClusterUsingVIP searches all managed clusters to find if any is using the given VIP
+// findClusterUsingVIP searches all non-deleted clusters to find if any is using the given VIP.
 func (o *Orchestrator) findClusterUsingVIP(vip string) string {
-	// Get workspace parent directory
 	workspaceParent := filepath.Dir(o.workspaceDir)
 
-	// List all directories in workspace
 	entries, err := os.ReadDir(workspaceParent)
 	if err != nil {
-		return "" // Can't check, return empty
+		return ""
 	}
 
 	currentCluster := o.cfg.OpenShift.ClusterName
@@ -947,46 +938,35 @@ func (o *Orchestrator) findClusterUsingVIP(vip string) string {
 		}
 
 		clusterName := entry.Name()
-
-		// Skip current cluster
 		if clusterName == currentCluster {
 			continue
 		}
 
-		// Check if cluster is managed OR failed (both mean the cluster occupies the VIP)
-		managedMarker := filepath.Join(workspaceParent, clusterName, ".managed")
-		failedMarker := filepath.Join(workspaceParent, clusterName, ".failed")
-
-		if _, err1 := os.Stat(managedMarker); os.IsNotExist(err1) {
-			if _, err2 := os.Stat(failedMarker); os.IsNotExist(err2) {
-				continue // Not a managed or failed cluster
-			}
+		// A cluster actively claims a VIP if it is NOT marked as deleted.
+		// This correctly catches clusters that are currently in_progress.
+		if _, err := os.Stat(filepath.Join(workspaceParent, clusterName, ".deleted")); err == nil {
+			continue
 		}
 
-		// Check if cluster is deleted
-		deletedMarker := filepath.Join(workspaceParent, clusterName, ".deleted")
-		if _, err := os.Stat(deletedMarker); err == nil {
-			continue // Cluster is deleted, skip
-		}
-
-		// Read the cluster's config
 		configPath := filepath.Join(workspaceParent, clusterName, "config.yaml")
 		data, err := os.ReadFile(configPath)
 		if err != nil {
-			continue // Can't read config
+			continue
 		}
 
-		// Safely parse the YAML to guarantee an exact value match
 		var tempCfg types.AgentConfig
 		if err := yaml.Unmarshal(data, &tempCfg); err == nil {
-			if tempCfg.Services.LoadBalancer != nil && tempCfg.Services.LoadBalancer.GetVIP() == vip {
+			// Resolve the neighbour's effective VIP including the zero-config default,
+			// so that a cluster deployed with the Controller IP as VIP is never invisible.
+			if tempCfg.GetEffectiveVIP() == vip {
 				return clusterName
 			}
 		}
 	}
 
-	return "" // No conflict found
+	return ""
 }
+
 
 // GetLogger returns the orchestrator's logger instance
 func (o *Orchestrator) GetLogger() *logger.Logger {
