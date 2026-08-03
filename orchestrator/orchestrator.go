@@ -250,7 +250,12 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 				// 2. ZERO-CONFIG: Controller IP lives on the interface natively — no alias check needed.
 				if iface != "" && effectiveVIP != ctrlIP {
 					output, err := o.executor.Execute(ctx, fmt.Sprintf("ip addr show %s", iface))
-					if err == nil && strings.Contains(output, effectiveVIP+"/") {
+					if err != nil {
+						o.logger.Debug("Could not check interface for existing VIP alias; skipping alias check",
+							"interface", iface,
+							"vip", effectiveVIP,
+							"error", err)
+					} else if strings.Contains(output, effectiveVIP+"/") {
 						o.logger.Error("VIP is already configured on interface",
 							"vip", effectiveVIP,
 							"interface", iface)
@@ -927,6 +932,9 @@ func (o *Orchestrator) findClusterUsingVIP(vip string) string {
 
 	entries, err := os.ReadDir(workspaceParent)
 	if err != nil {
+		o.logger.Debug("Could not read workspace parent directory; skipping cross-cluster VIP check",
+			"dir", workspaceParent,
+			"error", err)
 		return ""
 	}
 
