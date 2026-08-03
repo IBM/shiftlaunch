@@ -18,11 +18,25 @@ import (
 	"github.com/IBM/shiftlaunch/logger"
 	"github.com/IBM/shiftlaunch/orchestrator"
 	"github.com/IBM/shiftlaunch/types"
+	"github.com/IBM/shiftlaunch/utils"
 )
 
 // version is dynamically injected via ldflags at compile time.
 // "dev-build" is the fallback if someone builds it without the Makefile.
 var version = "dev-build"
+
+// Mirror URL format strings for ppc64le OCP artefacts.
+// %s is the full version (e.g. "4.17.3") for client/installer paths,
+// and the major.minor (e.g. "4.17") for RHCOS dependency paths.
+const (
+	mirrorClientFmt    = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/openshift-client-linux.tar.gz"
+	mirrorInstallerFmt = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/openshift-install-linux.tar.gz"
+	mirrorOCMirrorFmt  = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/oc-mirror.tar.gz"
+	mirrorKernelFmt    = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-kernel.ppc64le"
+	mirrorInitramfsFmt = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-initramfs.ppc64le.img"
+	mirrorRootfsFmt    = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-rootfs.ppc64le.img"
+	mirrorChecksumFmt  = "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/sha256sum.txt"
+)
 
 var (
 	// Global flags
@@ -248,12 +262,12 @@ func loadConfig(requireConfig bool) (*types.AgentConfig, *config.AgentDaemonConf
 		// Pre-release versions (ec, rc, candidate, nightly, etc.) do not have stable
 		// mirror paths. Skip auto-resolving URLs and let validation enforce that the
 		// user explicitly provides them.
-		if !isPreReleaseVersion(cfg.OpenShift.Version) {
+		if !utils.IsPreReleaseVersion(cfg.OpenShift.Version) {
 			if cfg.OpenShift.OCPClientConfig.Client == "" {
-				cfg.OpenShift.OCPClientConfig.Client = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/openshift-client-linux.tar.gz", cfg.OpenShift.Version)
+				cfg.OpenShift.OCPClientConfig.Client = fmt.Sprintf(mirrorClientFmt, cfg.OpenShift.Version)
 			}
 			if cfg.OpenShift.OCPClientConfig.Installer == "" {
-				cfg.OpenShift.OCPClientConfig.Installer = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/openshift-install-linux.tar.gz", cfg.OpenShift.Version)
+				cfg.OpenShift.OCPClientConfig.Installer = fmt.Sprintf(mirrorInstallerFmt, cfg.OpenShift.Version)
 			}
 			// Auto-resolver for the oc-mirror plugin: only needed for air-gapped managed-registry
 			// deployments with official releases (ci builds use 'oc adm release mirror' instead).
@@ -261,24 +275,24 @@ func loadConfig(requireConfig bool) (*types.AgentConfig, *config.AgentDaemonConf
 				cfg.Network.IsolationLevel == "air-gapped" &&
 				cfg.Services.Registry.IsManaged() &&
 				cfg.OpenShift.ReleaseType != "ci" {
-				cfg.OpenShift.OCPClientConfig.MirrorClient = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/%s/oc-mirror.tar.gz", cfg.OpenShift.Version)
+				cfg.OpenShift.OCPClientConfig.MirrorClient = fmt.Sprintf(mirrorOCMirrorFmt, cfg.OpenShift.Version)
 			}
 			if cfg.Nodes.BootMethod != "agent" {
 				if cfg.OpenShift.RHCOSImages.KernelURL == "" {
-					cfg.OpenShift.RHCOSImages.KernelURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-kernel.ppc64le", majorMinor)
+					cfg.OpenShift.RHCOSImages.KernelURL = fmt.Sprintf(mirrorKernelFmt, majorMinor)
 				}
 				if cfg.OpenShift.RHCOSImages.InitramfsURL == "" {
-					cfg.OpenShift.RHCOSImages.InitramfsURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-initramfs.ppc64le.img", majorMinor)
+					cfg.OpenShift.RHCOSImages.InitramfsURL = fmt.Sprintf(mirrorInitramfsFmt, majorMinor)
 				}
 				if cfg.OpenShift.RHCOSImages.RootfsURL == "" {
-					cfg.OpenShift.RHCOSImages.RootfsURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/rhcos-live-rootfs.ppc64le.img", majorMinor)
+					cfg.OpenShift.RHCOSImages.RootfsURL = fmt.Sprintf(mirrorRootfsFmt, majorMinor)
 				}
 				if cfg.OpenShift.RHCOSImages.ChecksumURL == "" {
-					cfg.OpenShift.RHCOSImages.ChecksumURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/sha256sum.txt", majorMinor)
+					cfg.OpenShift.RHCOSImages.ChecksumURL = fmt.Sprintf(mirrorChecksumFmt, majorMinor)
 				}
 			}
 			if cfg.OpenShift.RHCOSImages.ChecksumURL == "" {
-				cfg.OpenShift.RHCOSImages.ChecksumURL = fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/%s/latest/sha256sum.txt", majorMinor)
+				cfg.OpenShift.RHCOSImages.ChecksumURL = fmt.Sprintf(mirrorChecksumFmt, majorMinor)
 			}
 		}
 	}
@@ -352,19 +366,6 @@ func loadConfig(requireConfig bool) (*types.AgentConfig, *config.AgentDaemonConf
 	orch := orchestrator.NewOrchestrator(&cfg, daemonCfg, appLogger, workspaceDir, debug)
 
 	return &cfg, daemonCfg, orch, nil
-}
-
-// isPreReleaseVersion returns true if the version string contains any pre-release
-// marker that would not have a stable path on mirror.openshift.com.
-// Examples: 4.21.0-ec.1, 4.21.0-rc.2, 4.21.0-candidate, 4.21.0-0.nightly-2025-01-01
-func isPreReleaseVersion(version string) bool {
-	lower := strings.ToLower(version)
-	for _, marker := range []string{"ec", "rc", "candidate", "nightly", "pre", "alpha", "beta"} {
-		if strings.Contains(lower, "-"+marker) {
-			return true
-		}
-	}
-	return false
 }
 
 // Made with Bob

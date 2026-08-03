@@ -15,6 +15,7 @@ import (
 	"github.com/IBM/shiftlaunch/localexec"
 	"github.com/IBM/shiftlaunch/logger"
 	"github.com/IBM/shiftlaunch/types"
+	"github.com/IBM/shiftlaunch/utils"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -297,6 +298,8 @@ func (v *Validator) validateOpenShift() {
 
 	if o.Version == "" {
 		v.errors = append(v.errors, "openshift.version is required")
+	} else if !utils.IsValidVersion(o.Version) {
+		v.errors = append(v.errors, fmt.Sprintf("openshift.version '%s' is invalid: expected MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-<suffix> (e.g. 4.17.3, 4.21.0-rc.2)", o.Version))
 	}
 
 	// Validate strict enum for Release Type
@@ -324,7 +327,7 @@ func (v *Validator) validateOpenShift() {
 		}
 	}
 
-	preRelease := isPreReleaseVersion(o.Version)
+	preRelease := utils.IsPreReleaseVersion(o.Version)
 
 	// Skip RHCOS validation for Agent boot (Agent installer downloads RHCOS automatically)
 	if v.cfg.Nodes.BootMethod == "agent" {
@@ -1143,16 +1146,4 @@ func (v *Validator) validateNodeIPsNotAlive(ctx context.Context) {
 
 	// Add all collected errors to validator errors
 	v.errors = append(v.errors, conflictErrors...)
-}
-// isPreReleaseVersion returns true if the version string contains any pre-release
-// marker that would not have a stable path on mirror.openshift.com.
-// Examples: 4.21.0-ec.1, 4.21.0-rc.2, 4.21.0-candidate, 4.21.0-0.nightly-2025-01-01
-func isPreReleaseVersion(version string) bool {
-	lower := strings.ToLower(version)
-	for _, marker := range []string{"ec", "rc", "candidate", "nightly", "pre", "alpha", "beta"} {
-		if strings.Contains(lower, "-"+marker) {
-			return true
-		}
-	}
-	return false
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/IBM/shiftlaunch/logger"
 	"github.com/IBM/shiftlaunch/services"
 	"github.com/IBM/shiftlaunch/types"
+	"github.com/IBM/shiftlaunch/utils"
 	"github.com/pterm/pterm"
 	"go.yaml.in/yaml/v3"
 )
@@ -76,7 +77,7 @@ func (o *Orchestrator) saveState(phase string) {
 	}
 
 	o.state.CurrentPhase = phase
-	if !contains(o.state.CompletedPhases, phase) {
+	if !utils.Contains(o.state.CompletedPhases, phase) {
 		o.state.CompletedPhases = append(o.state.CompletedPhases, phase)
 	}
 	_ = o.stateManager.SaveState(o.state)
@@ -288,7 +289,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	}
 
 	// --- PHASE 1: DISCOVERY ---
-	if !resume || !contains(o.state.CompletedPhases, "discovery") {
+	if !resume || !utils.Contains(o.state.CompletedPhases, "discovery") {
 		phaseExec := o.startPhase("discovery")
 		o.logger.StartPhase("[Phase 1/6] Pre-Flight & HMC Discovery")
 
@@ -323,7 +324,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	}
 
 	// --- PHASE 2: DOWNLOADS ---
-	needsDownloads := !resume || !contains(o.state.CompletedPhases, "downloads")
+	needsDownloads := !resume || !utils.Contains(o.state.CompletedPhases, "downloads")
 
 	// ---  LBYL Safety Check for Missing Binaries ---
 	if !needsDownloads {
@@ -352,7 +353,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	}
 
 	// --- PHASE 3: MANAGED SERVICES ---
-	if !resume || !contains(o.state.CompletedPhases, "services") {
+	if !resume || !utils.Contains(o.state.CompletedPhases, "services") {
 		phaseExec := o.startPhase("services")
 		o.logger.StartPhase("[Phase 3/6] Configuring Managed Infrastructure Services")
 
@@ -588,7 +589,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	}
 
 	// --- PHASE 4: IGNITION GENERATION ---
-	needsIgnition := !resume || !contains(o.state.CompletedPhases, "ignition")
+	needsIgnition := !resume || !utils.Contains(o.state.CompletedPhases, "ignition")
 
 	if !needsIgnition {
 		if _, err := os.Stat(filepath.Join(o.workspaceDir, "install-dir")); os.IsNotExist(err) {
@@ -677,7 +678,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	}
 
 	// --- PHASE 5: BOOT ---
-	if !resume || !contains(o.state.CompletedPhases, "boot") {
+	if !resume || !utils.Contains(o.state.CompletedPhases, "boot") {
 		phaseExec := o.startPhase("boot")
 		o.logger.StartPhase("[Phase 5/6] Initiating Cluster Boot")
 
@@ -720,7 +721,7 @@ func (o *Orchestrator) Deploy(ctx context.Context, resume bool) (err error) {
 	}
 
 	// --- PHASE 6: WAIT FOR INSTALLATION ---
-	if !resume || !contains(o.state.CompletedPhases, "wait") {
+	if !resume || !utils.Contains(o.state.CompletedPhases, "wait") {
 		phaseExec := o.startPhase("wait")
 		o.logger.StartPhase("[Phase 6/6] Waiting for OpenShift Installation")
 
@@ -918,15 +919,6 @@ func (o *Orchestrator) DumpConfigs(ctx context.Context) error {
 	return nil
 }
 
-// Helper to check if a string exists in a slice
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 
 // findClusterUsingVIP searches all managed clusters to find if any is using the given VIP
 func (o *Orchestrator) findClusterUsingVIP(vip string) string {
