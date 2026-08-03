@@ -36,8 +36,8 @@ ShiftLaunch is a turnkey orchestration agent for deploying Red Hat OpenShift clu
 
 ### Download a Pre-Built Binary
 
-1. Go to the [releases page](https://github.ibm.com/sudeeshjohn/shiftlaunch/releases).
-2. Download the binary for your platform under the **Assets** section.
+1. Go to the [releases page](https://github.com/IBM/shiftlaunch/releases).
+2. Download the binary for your platform from the **Assets** section.
 3. Install it:
 
 ```bash
@@ -56,7 +56,7 @@ shiftlaunch --help
 Requires **Go 1.22+**. ShiftLaunch cross-compiles without CGO.
 
 ```bash
-git clone https://github.ibm.com/sudeeshjohn/shiftlaunch.git
+git clone https://github.com/IBM/shiftlaunch.git
 cd shiftlaunch
 
 make build
