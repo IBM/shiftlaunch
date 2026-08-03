@@ -12,6 +12,7 @@ import (
 	"github.com/IBM/shiftlaunch/localexec"
 	"github.com/IBM/shiftlaunch/logger"
 	"github.com/IBM/shiftlaunch/types"
+	"github.com/IBM/shiftlaunch/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -252,7 +253,7 @@ func (r *RegistryManager) Setup(ctx context.Context, workspaceDir string) error 
 		mirrorEventID := fmt.Sprintf("mirror_release_%s", r.cfg.OpenShift.Version)
 
 		// Check if mirroring was already completed
-		if r.state != nil && contains(r.state.CompletedEvents, mirrorEventID) {
+		if r.state != nil && utils.Contains(r.state.CompletedEvents, mirrorEventID) {
 			r.logger.Info("Image mirroring already completed, skipping...")
 		} else {
 			r.logger.Info("Mirroring OpenShift release images (this may take 15-30 minutes)...")
@@ -515,14 +516,6 @@ func (r *RegistryManager) isRegistryShared() bool {
 }
 
 // Helper function to check if a string exists in a slice
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 
 // shellQuote wraps s in single quotes and escapes any literal single quotes
 // inside it using the '\'' idiom, making the value safe to embed in a bash

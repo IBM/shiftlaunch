@@ -261,6 +261,33 @@ openshift:
   ssh_public_key_file: "~/.ssh/id_rsa.pub" # SSH public key for 'core' user access to the OpenShift nodes
   force_ocp_download: false                # Set to true to force re-download of existing OpenShift artifacts
 
+  # --- ADVANCED OPENSHIFT NETWORK SETTINGS (optional, defaults shown) ---
+  # cluster_network_cidr: "10.128.0.0/14"  # Pod network CIDR (default: 10.128.0.0/14)
+  # cluster_network_host_prefix: 23        # Per-node subnet prefix length (default: 23)
+  # service_network: "172.30.0.0/16"       # Service/ClusterIP network CIDR (default: 172.30.0.0/16)
+
+  # --- OCP CLIENT DOWNLOAD OVERRIDES (optional) ---
+  # Leave commented out to let ShiftLaunch auto-resolve download URLs from mirror.openshift.com.
+  # Useful for air-gapped environments, pinned versions, or custom mirrors.
+  # ocp_client_config:
+  #   ocp_client: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.21.18/openshift-client-linux.tar.gz"
+  #   ocp_installer: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.21.18/openshift-install-linux.tar.gz"
+{{- if and (eq .IsolationLevel "air-gapped") (not .ExtRegistry) (ne .ReleaseType "ci")}}
+  #   ocp_mirror_client: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.21.18/oc-mirror.tar.gz"
+{{- end}}
+  #   checksum_url: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/clients/ocp/4.21.18/sha256sum.txt"
+
+{{- if ne .BootMethod "agent"}}
+  # --- RHCOS IMAGE OVERRIDES (optional) ---
+  # Leave commented out to let ShiftLaunch auto-resolve RHCOS image URLs.
+  # Required for air-gapped environments or when pinning a specific RHCOS build.
+  # rhcos_images:
+  #   kernel_url: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/4.21/latest/rhcos-live-kernel.ppc64le"
+  #   initramfs_url: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/4.21/latest/rhcos-live-initramfs.ppc64le.img"
+  #   rootfs_url: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/4.21/latest/rhcos-live-rootfs.ppc64le.img"
+  #   checksum_url: "https://mirror.openshift.com/pub/openshift-v4/ppc64le/dependencies/rhcos/4.21/latest/sha256sum.txt"
+{{- end}}
+
 # -----------------------------------------------------------------------------
 # 4. HMC CREDENTIALS (IBM Hardware Management Console)
 # -----------------------------------------------------------------------------

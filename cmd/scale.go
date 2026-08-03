@@ -19,6 +19,7 @@ import (
 	"github.com/IBM/shiftlaunch/localexec"
 	"github.com/IBM/shiftlaunch/services"
 	"github.com/IBM/shiftlaunch/types"
+	"github.com/IBM/shiftlaunch/utils"
 )
 
 // Day2NodesConfig represents the configuration for Day 2 nodes
@@ -239,7 +240,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 	// 2. Identify added workers (Scale-Up)
 	for _, worker := range updatedCfg.Nodes.Workers {
 		readyMarker := "ready_" + worker.Hostname
-		if contains(state.CompletedPhases, readyMarker) {
+		if utils.Contains(state.CompletedPhases, readyMarker) {
 			continue
 		}
 
@@ -255,7 +256,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 		scaleUpTargets = append(scaleUpTargets, worker)
 
 		// If it hasn't been powered on by the HMC yet, it needs a boot
-		if !contains(state.CompletedPhases, "booted_"+worker.Hostname) {
+		if !utils.Contains(state.CompletedPhases, "booted_"+worker.Hostname) {
 			pendingBoot = append(pendingBoot, worker)
 		}
 	}
@@ -763,7 +764,7 @@ func runScale(cmd *cobra.Command, args []string) error {
 	state, _ = stateManager.LoadState()
 	for _, w := range scaleUpTargets {
 		readyMarker := "ready_" + w.Hostname
-		if !contains(state.CompletedPhases, readyMarker) {
+		if !utils.Contains(state.CompletedPhases, readyMarker) {
 			state.CompletedPhases = append(state.CompletedPhases, readyMarker)
 		}
 	}
@@ -775,12 +776,4 @@ func runScale(cmd *cobra.Command, args []string) error {
 }
 
 // contains function is for search a string in a slice of strings
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 

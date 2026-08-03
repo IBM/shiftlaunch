@@ -66,6 +66,19 @@ func (d *Downloader) DownloadRHCOSImages(ctx context.Context, workspaceDir strin
 
 	manifestPath := filepath.Join(rhcosDir, "sha256sum.txt")
 
+	// Fetch the checksum manifest if a URL is available (auto-resolved by root.go
+	// when rhcos_images is omitted, or explicitly set by the user).
+	if urls.ChecksumURL != "" {
+		d.logger.Info("Integrity Mode: Fetching fresh RHCOS checksum manifest", "url", urls.ChecksumURL)
+		_ = os.Remove(manifestPath)
+		dlManifestCmd := fmt.Sprintf("curl -sSL --fail --max-time %d -o %s -- %s", timeout, shellQuote(manifestPath), shellQuote(urls.ChecksumURL))
+		if _, err := d.exec.Execute(ctx, dlManifestCmd); err != nil {
+			d.logger.Warn("Failed to fetch RHCOS checksum manifest", "error", err)
+		} else {
+			d.logger.Info("RHCOS checksum manifest downloaded")
+		}
+	}
+
 	images := []struct {
 		url      string
 		filename string
