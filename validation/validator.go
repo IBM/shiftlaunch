@@ -217,36 +217,37 @@ func (v *Validator) validateNetwork(ctx context.Context) {
 		}
 	}
 
-	if v.cfg.Services.LoadBalancer.IsManaged() && v.cfg.Services.LoadBalancer.GetVIP() != "" {
-		v.validateVIPNotInUse(ctx, v.cfg.Services.LoadBalancer.GetVIP())
+	if v.cfg.Services.LoadBalancer.IsManaged() {
+		// Resolve the effective VIP for this cluster, including the zero-config default
+		effectiveVIP := v.cfg.GetEffectiveVIP()
+		if effectiveVIP != "" {
+			v.validateVIPNotInUse(ctx, effectiveVIP)
+		}
 	}
 }
 
 // validateVIPNotInUse checks if the VIP is already configured on the controller interface
-// or being used by another managed cluster
+// or being used by another managed cluster.
 func (v *Validator) validateVIPNotInUse(ctx context.Context, vip string) {
 	iface := v.cfg.Network.ControllerInterface
 	ctrlIP := v.cfg.Network.ControllerIP
 
-	// ZERO-CONFIG CHECK: If it is the controller IP, it is allowed to be on the interface!
+	// 1. ALWAYS check cross-cluster collision first (even for the Controller IP).
+	conflictingCluster := v.findClusterUsingVIP(vip)
+	if conflictingCluster != "" {
+		v.errors = append(v.errors, fmt.Sprintf("VIP %s is already assigned to cluster '%s'. Multi-cluster environments require unique VIPs.", vip, conflictingCluster))
+		return
+	}
+
+	// 2. ZERO-CONFIG: Controller IP lives on the interface natively — no alias check needed.
 	if iface == "" || vip == ctrlIP {
 		return
 	}
 
+	// 3. Ensure no rogue process has bound the floating VIP alias.
 	output, err := v.exec.Execute(ctx, fmt.Sprintf("ip addr show %s", iface))
 	if err == nil && strings.Contains(output, vip+"/") {
-		conflictingCluster := v.findClusterUsingVIP(vip)
-		if conflictingCluster != "" {
-			v.errors = append(v.errors, fmt.Sprintf("VIP %s is already in use by cluster '%s'. Choose a different VIP", vip, conflictingCluster))
-		} else {
-			v.errors = append(v.errors, fmt.Sprintf("VIP %s is already configured on interface %s. Remove it manually or use a different IP", vip, iface))
-		}
-		return
-	}
-
-	conflictingCluster := v.findClusterUsingVIP(vip)
-	if conflictingCluster != "" {
-		v.errors = append(v.errors, fmt.Sprintf("VIP %s is already assigned to cluster '%s' in configurations", vip, conflictingCluster))
+		v.errors = append(v.errors, fmt.Sprintf("VIP %s is already configured on interface %s. Remove it manually or use a different IP", vip, iface))
 	}
 }
 
@@ -266,11 +267,8 @@ func (v *Validator) findClusterUsingVIP(vip string) string {
 			continue
 		}
 
-		if _, err1 := os.Stat(filepath.Join(v.workspaceDir, clusterName, ".managed")); os.IsNotExist(err1) {
-			if _, err2 := os.Stat(filepath.Join(v.workspaceDir, clusterName, ".failed")); os.IsNotExist(err2) {
-				continue
-			}
-		}
+		// A cluster actively claims a VIP if it is NOT marked as deleted.
+		// This correctly catches clusters that are currently in_progress.
 		if _, err := os.Stat(filepath.Join(v.workspaceDir, clusterName, ".deleted")); err == nil {
 			continue
 		}
@@ -283,13 +281,16 @@ func (v *Validator) findClusterUsingVIP(vip string) string {
 
 		var tempCfg types.AgentConfig
 		if err := yaml.Unmarshal(data, &tempCfg); err == nil {
-			if tempCfg.Services.LoadBalancer != nil && tempCfg.Services.LoadBalancer.GetVIP() == vip {
+			// Resolve the neighbour's effective VIP including the zero-config default,
+			// so that a cluster deployed with the Controller IP as VIP is never invisible.
+			if tempCfg.GetEffectiveVIP() == vip {
 				return clusterName
 			}
 		}
 	}
 	return ""
 }
+
 
 // validateOpenShift validates OpenShift configuration
 func (v *Validator) validateOpenShift() {

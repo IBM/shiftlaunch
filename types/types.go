@@ -353,4 +353,18 @@ func (c *AgentConfig) Validate() error {
 	return nil
 }
 
+// GetEffectiveVIP returns the VIP that this cluster will actually use at runtime.
+// Priority: ExternalLoadBalancer > explicit VIP > Controller IP (zero-config default).
+func (c *AgentConfig) GetEffectiveVIP() string {
+	if c.Services.LoadBalancer != nil {
+		if c.Services.LoadBalancer.ExternalLoadBalancer != "" {
+			return c.Services.LoadBalancer.ExternalLoadBalancer
+		}
+		if c.Services.LoadBalancer.VIP != "" {
+			return c.Services.LoadBalancer.VIP
+		}
+	}
+	return c.Network.ControllerIP
+}
+
 // Made with Bob
