@@ -526,8 +526,8 @@ func (v *Validator) validateMultiNodeCluster() {
 		if masterCount != 3 {
 			v.errors = append(v.errors, fmt.Sprintf("netboot deployment requires exactly 3 master nodes, got %d", masterCount))
 		}
-		if workerCount < 2 {
-			v.errors = append(v.errors, fmt.Sprintf("netboot deployment requires a minimum of 2 worker nodes, got %d", workerCount))
+		if workerCount < 1 {
+			v.errors = append(v.errors, fmt.Sprintf("netboot deployment requires a minimum of 1 worker node, got %d", workerCount))
 		}
 	} else if v.cfg.Nodes.BootMethod == "agent" {
 		// Agent-based installer dynamically handles bootstrap within a master node.
