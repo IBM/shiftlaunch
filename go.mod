@@ -49,7 +49,7 @@ require (
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/gookit/color v1.6.1 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
-	github.com/mattn/go-runewidth v0.0.30 // indirect
+	github.com/mattn/go-runewidth v0.0.31 // indirect
 	github.com/pterm/pterm v0.12.83
 	github.com/xo/terminfo v1.2.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
