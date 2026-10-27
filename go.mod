@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	github.com/IBM/infra-go-sdk v0.0.0-20260919011418-b94ada346e9e
+	github.com/IBM/infra-go-sdk v0.0.0-20261027052753-f4ce214410a9
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	go.yaml.in/yaml/v3 v3.0.5
